@@ -38,24 +38,6 @@ Provider response bodies and API keys are never shown in error messages. Tests u
 
 Brand palette: #FFC7C7, #FFE2E2, #F6F6F6, #8785A2, with dark text for contrast. Launcher source and pre-sized Android/iOS icons are checked in under assets/branding; platform preparation applies them on every build.
 
-## One-time fixed release signing setup
-
-Use a trusted computer with Java 17/keytool, Python 3 and GitHub CLI authenticated as a repository administrator. From this checkout, run:
-
-```sh
-bash tool/configure-release-signing.sh /absolute/private/ai-moa-signing-backup
-```
-
-This generates one RSA-3072 PKCS12 key with alias `ai-moa`, keeps the encrypted keystore and password in the private backup directory, and uploads these encrypted repository Actions Secrets:
-
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_SIGNING_CERT_SHA256` (public certificate fingerprint used as a consistency check)
-
-Back up the keystore and password securely outside GitHub and outside the checkout. GitHub Secrets cannot be downloaded later. Never commit, attach to a release, or post the signing key/password. The script refuses to replace existing signing secrets or local backup files. If a partial upload fails, use the retained files to complete secure entry in Settings → Secrets and variables → Actions; do not generate another key.
-
-Main CI restores the key only for production builds, checks its fingerprint, signs the APK, verifies the actual APK signature with apksigner, then removes temporary private files. Preserve the same Secrets for every future release and keep increasing the Android version code. The first move from old development-signed APKs needs a reinstall (which deletes local data); later higher-version APKs signed with the same key can update in place. Release compilation and signature verification are exercised on PRs with a disposable test key, but production signing requires the three Secrets above.
-
 ## Preserved local production key (AI Moa)
 
 The production key is kept outside Git at `/workspace/credentials/ai-moa/release.p12`, with its private password file `release.password`. Only the public fingerprint in `signing/release-certificate.sha256` is committed. Preserve this entire credential directory when moving environments and keep a secure independent backup. Never regenerate the key when restoring an environment: the initializer refuses if a public pin exists but the original private key is missing.
@@ -67,3 +49,13 @@ python3 tool/local-release.py
 ```
 
 This checks the private key against the committed public certificate, signs the release and verifies the resulting APK. GitHub Secrets are optional: without them CI creates test-only artifacts and never publishes them as releases. Production APKs can be uploaded from this trusted workspace after verification. Existing development-signed installations require one migration reinstall.
+
+### Optional CI production releases
+
+GitHub Secrets are not required for local signing or uploading a verified APK. If an administrator wants CI to publish releases automatically, upload the already-preserved key (never generate another one):
+
+```sh
+bash tool/configure-release-signing.sh /workspace/credentials/ai-moa
+```
+
+This optional step needs repository Secrets write access. It uploads ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_SIGNING_CERT_SHA256. Main CI checks the fixed public pin before signing; PR/test builds use disposable keys and are never published as production releases.
