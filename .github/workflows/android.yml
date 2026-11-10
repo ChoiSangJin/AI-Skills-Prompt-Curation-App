@@ -60,19 +60,9 @@ jobs:
           fi
           exit "$result"
       - name: Verify APK signature
-        run: |
-          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
-          "$signer" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk > "$RUNNER_TEMP/apk-signature.txt"
-          python3 - <<'PYCODE'
-          import os,re
-          from pathlib import Path
-          root=Path(os.environ['RUNNER_TEMP'])
-          report=(root/'apk-signature.txt').read_text()
-          actual=re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)',report)
-          expected=(root/'ai-moa-release.fingerprint').read_text().strip()
-          assert actual and actual[1].lower()==expected, 'APK signing certificate mismatch'
-          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write('APK certificate SHA-256 (PR certificates are disposable tests): `'+expected+'`\n')
-          PYCODE
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tool/verify-apk-signature.py
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event_name == 'pull_request' && 'ai-moa-test-signed-apk' || 'ai-moa-release-apk' }}
