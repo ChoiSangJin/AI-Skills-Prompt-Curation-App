@@ -59,3 +59,7 @@ bash tool/configure-release-signing.sh /workspace/credentials/ai-moa
 ```
 
 This optional step needs repository Secrets write access. It uploads ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_SIGNING_CERT_SHA256. Main CI checks the fixed public pin before signing; PR/test builds use disposable keys and are never published as production releases.
+
+### Publishing an already signed local APK
+
+The `Publish verified signed APK` workflow can upload a local production APK through GitHub Actions' own repository token; no private signing key or password is sent to Actions. Stage only the public APK, its checksum, public certificate fingerprint and release-info.json on a temporary `release-assets/vX.Y.Z` branch. The staged workflow must be the reviewed publish-presigned.yml from main; pushes can trigger publication, or maintainers can dispatch it manually. The job validates artifact hashes, package/version metadata, the pinned signer and source commit ancestry before publishing. It refuses to overwrite an already published release. Do not include private credentials in asset branches.
