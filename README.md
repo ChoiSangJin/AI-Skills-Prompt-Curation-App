@@ -21,6 +21,6 @@ After CI succeeds on main, open this repository's **Releases** page and download
 
 ## Verification status
 
-Initial cloud execution could not download the Dart SDK because storage.googleapis.com was denied by network policy. Compilation, device secure storage/SQLite behavior and API integration are unverified until CI/device checks succeed. No APK has yet been published.
+Android analysis and compilation run in the linked GitHub Actions workflow on every PR. Check the workflow result for the exact commit before installing its artifact. Device secure storage/SQLite behavior and live Gemini API integration still require device validation.
 
 GitHub search has its own low unauthenticated rate limit. When offline or rate limited the app retains cached data. Gemini requests send task text or public repository metadata to Google and may incur API charges. Keys can be removed in Settings.
