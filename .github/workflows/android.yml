@@ -37,6 +37,7 @@ jobs:
       - name: Restore fixed release key from four Secrets
         if: github.event_name != 'pull_request'
         env:
+          GH_TOKEN: ${{ github.token }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
