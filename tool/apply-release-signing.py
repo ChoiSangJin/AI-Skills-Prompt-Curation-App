@@ -9,6 +9,7 @@ if '// AI_MOA_FIXED_SIGNING' not in s:
     s = s.replace('    buildTypes {', '''    signingConfigs {
         create("release") {
             if (!releaseKeyStorePath.isNullOrBlank()) {
+                storeType = "PKCS12"
                 storeFile = file(releaseKeyStorePath)
                 storePassword = System.getenv("ANDROID_RELEASE_PASSWORD")
                 keyAlias = "ai-moa"

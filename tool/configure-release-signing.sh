@@ -4,7 +4,15 @@ set -euo pipefail
 umask 077
 repo=ChoiSangJin/AI-Skills-Prompt-Curation-App
 signing_dir=${1:?Usage: bash tool/configure-release-signing.sh /absolute/private/backup-directory}
-for binary in gh keytool python3; do command -v "$binary" >/dev/null; done
+for binary in gh keytool python3 git; do command -v "$binary" >/dev/null; done
+checkout=$(git -C "$(dirname "$0")/.." rev-parse --show-toplevel)
+python3 - "$signing_dir" "$checkout" <<'PYCODE'
+import sys
+from pathlib import Path
+backup=Path(sys.argv[1])
+if not backup.is_absolute() or backup.resolve().is_relative_to(Path(sys.argv[2]).resolve()):
+    raise SystemExit('Use an absolute backup directory outside the checkout.')
+PYCODE
 # Check access and refuse accidental rotation before creating any material.
 existing=$(gh secret list --repo "$repo" --json name)
 printf '%s' "$existing" | python3 -c 'import json,sys; names={x["name"] for x in json.load(sys.stdin)}; sys.exit("Signing secrets already exist; do not rotate the key.") if names & {"ANDROID_KEYSTORE_BASE64","ANDROID_KEYSTORE_PASSWORD","ANDROID_SIGNING_CERT_SHA256"} else None'
