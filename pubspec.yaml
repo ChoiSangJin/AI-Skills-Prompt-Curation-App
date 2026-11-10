@@ -1,0 +1,17 @@
+name: ai_skills_curation
+description: Client-side AI skills and prompt curation.
+publish_to: none
+version: 1.0.0+1
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  google_generative_ai: ^0.4.0
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  flutter_secure_storage: ^9.0.0
+  url_launcher: ^6.2.5
+flutter:
+  uses-material-design: true
