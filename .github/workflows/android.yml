@@ -26,36 +26,28 @@ jobs:
         run: |
           mkdir -p "$GRADLE_USER_HOME/init.d"
           cp tool/gradle.init.gradle "$GRADLE_USER_HOME/init.d/moa.gradle"
+      - name: Test signing configuration
+        run: python3 -m unittest discover -s test -p "*_test.py"
       - run: bash tool/prepare.sh
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
-      - name: Check optional production signing availability
-        id: production
-        if: github.event_name != 'pull_request'
-        env:
-          SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          SIGNING_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          SIGNING_CERT: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
-        run: |
-          if [ -n "$SIGNING_KEY" ] && [ -n "$SIGNING_PASSWORD" ] && [ -n "$SIGNING_CERT" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          fi
       - name: Create disposable PR signing fixture
-        if: steps.production.outputs.available != 'true'
+        if: github.event_name == 'pull_request'
         run: python3 tool/create-test-signing.py
-      - name: Restore fixed release key
-        if: steps.production.outputs.available == 'true'
+      - name: Restore fixed release key from four Secrets
+        if: github.event_name != 'pull_request'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: python3 tool/restore-signing.py
       - name: Build ARM64 APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          ANDROID_RELEASE_KEYSTORE="$RUNNER_TEMP/ai-moa-release.p12" ANDROID_RELEASE_PASSWORD="$(cat "$RUNNER_TEMP/ai-moa-release.password")" flutter build apk --release --target-platform android-arm64 > "$RUNNER_TEMP/apk-build.log" 2>&1
+          ANDROID_RELEASE_KEYSTORE="$RUNNER_TEMP/ai-moa-release.p12" ANDROID_RELEASE_PASSWORD="$(cat "$RUNNER_TEMP/ai-moa-release.password")" ANDROID_RELEASE_KEY_ALIAS="$(cat "$RUNNER_TEMP/ai-moa-release.alias")" ANDROID_RELEASE_KEY_PASSWORD="$(cat "$RUNNER_TEMP/ai-moa-release.key-password")" ANDROID_RELEASE_STORE_TYPE="$(cat "$RUNNER_TEMP/ai-moa-release.store-type")" flutter build apk --release --target-platform android-arm64 > "$RUNNER_TEMP/apk-build.log" 2>&1
           result=$?
           cat "$RUNNER_TEMP/apk-build.log"
           if [ "$result" -ne 0 ]; then
@@ -76,10 +68,10 @@ jobs:
         run: python3 tool/verify-apk-signature.py
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.production.outputs.available == 'true' && 'ai-moa-release-apk' || 'ai-moa-test-signed-apk' }}
+          name: ${{ github.event_name == 'pull_request' && 'ai-moa-test-signed-apk' || 'ai-moa-release-apk' }}
           path: build/app/outputs/flutter-apk/app-*.apk
       - name: Publish downloadable APK
-        if: github.ref == 'refs/heads/main' && steps.production.outputs.available == 'true'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -87,7 +79,7 @@ jobs:
           gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI 모아 $tag" --notes "Android ARM64 APK. Signed with the fixed AI Moa release certificate. The first migration from development builds requires a reinstall; later higher-version builds use the same certificate."
       - name: Remove ephemeral signing files
         if: always()
-        run: rm -f "$RUNNER_TEMP/ai-moa-release.p12" "$RUNNER_TEMP/ai-moa-release.password"
+        run: rm -f "$RUNNER_TEMP/ai-moa-release.p12" "$RUNNER_TEMP/ai-moa-release.password" "$RUNNER_TEMP/ai-moa-release.key-password" "$RUNNER_TEMP/ai-moa-release.alias" "$RUNNER_TEMP/ai-moa-release.store-type"
     permissions:
       contents: write
       checks: write

@@ -30,3 +30,11 @@ gradle.taskGraph.whenReady {
 }
 '''
     p.write_text(s)
+
+# Migrate previously generated platform directories without regenerating them.
+s = p.read_text()
+s = s.replace('storeType = "PKCS12"', 'storeType = System.getenv("ANDROID_RELEASE_STORE_TYPE") ?: "PKCS12"')
+s = s.replace('keyAlias = "ai-moa"', 'keyAlias = System.getenv("ANDROID_RELEASE_KEY_ALIAS")')
+s = s.replace('keyPassword = System.getenv("ANDROID_RELEASE_PASSWORD")', 'keyPassword = System.getenv("ANDROID_RELEASE_KEY_PASSWORD")')
+s = s.replace('(releaseKeyStorePath.isNullOrBlank() || System.getenv("ANDROID_RELEASE_PASSWORD").isNullOrBlank())', 'listOf("ANDROID_RELEASE_KEYSTORE", "ANDROID_RELEASE_PASSWORD", "ANDROID_RELEASE_KEY_ALIAS", "ANDROID_RELEASE_KEY_PASSWORD").any { System.getenv(it).isNullOrBlank() }')
+p.write_text(s)

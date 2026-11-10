@@ -48,17 +48,20 @@ For every update, keep application ID `com.choisangjin.ai_skills_curation`, incr
 python3 tool/local-release.py
 ```
 
-This checks the private key against the committed public certificate, signs the release and verifies the resulting APK. GitHub Secrets are optional: without them CI creates test-only artifacts and never publishes them as releases. Production APKs can be uploaded from this trusted workspace after verification. Existing development-signed installations require one migration reinstall.
+This checks the private key against the committed public certificate, signs the release and verifies the resulting APK. Production CI requires the four registered Android signing Secrets and fails closed if any are missing. PRs use disposable test keys only. Production APKs can be uploaded from this trusted workspace after verification. Existing development-signed installations require one migration reinstall.
 
-### Optional CI production releases
+### GitHub Actions production signing
 
-GitHub Secrets are not required for local signing or uploading a verified APK. If an administrator wants CI to publish releases automatically, upload the already-preserved key (never generate another one):
+Use the already registered repository Secrets; do not regenerate or overwrite them:
 
-```sh
-bash tool/configure-release-signing.sh /workspace/credentials/ai-moa
-```
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
 
-This optional step needs repository Secrets write access. It uploads ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD and ANDROID_SIGNING_CERT_SHA256. Main CI checks the fixed public pin before signing; PR/test builds use disposable keys and are never published as production releases.
+The alias and private-key password are independent inputs. JKS and PKCS12 keystores are detected automatically. No extra certificate Secret is needed: the public certificate is checked against `signing/release-certificate.sha256` and a mismatch stops the release to protect in-place updates. PRs validate the release path with a disposable JKS key using a different alias and distinct store/key passwords; production Secrets are never passed to PR jobs. Temporary credential files are removed after every run.
+
+The local preserved-key workflow remains available as a fallback. `tool/configure-release-signing.sh` is only for first-time setup in a different repository without existing signing Secrets; it refuses to overwrite registered ones. No setup or Secret updates are required for this repository.
 
 ### Publishing an already signed local APK
 
