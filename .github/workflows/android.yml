@@ -23,7 +23,26 @@ jobs:
       - run: bash tool/prepare.sh
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
-      - run: flutter build apk --release --target-platform android-arm64
+      - name: Build ARM64 APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          flutter build apk --release --target-platform android-arm64 > "$RUNNER_TEMP/apk-build.log" 2>&1
+          result=$?
+          cat "$RUNNER_TEMP/apk-build.log"
+          if [ "$result" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          import json, os
+          from pathlib import Path
+          log = Path(os.environ['RUNNER_TEMP']) / 'apk-build.log'
+          summary = log.read_text(errors='replace')[-45000:]
+          payload = {'name': 'APK build diagnostics', 'head_sha': os.environ['GITHUB_SHA'], 'status': 'completed', 'conclusion': 'failure', 'output': {'title': 'Android compiler output', 'summary': summary}}
+          (Path(os.environ['RUNNER_TEMP']) / 'apk-diagnostics.json').write_text(json.dumps(payload))
+          PYCODE
+            gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$RUNNER_TEMP/apk-diagnostics.json" > /dev/null
+          fi
+          exit "$result"
       - uses: actions/upload-artifact@v4
         with:
           name: ai-skills-arm64-apk
@@ -37,3 +56,4 @@ jobs:
           gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI 모아 $tag" --notes "Android ARM64 APK. Development signing; not a Play Store release."
     permissions:
       contents: write
+      checks: write
