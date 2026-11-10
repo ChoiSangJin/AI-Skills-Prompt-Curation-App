@@ -1,0 +1,10 @@
+// Apply to Flutter's included Gradle build as well as the generated app.
+// Kotlin artifacts are published in Maven Central; do not rely solely on
+// Gradle Plugin Portal's redirect/mirror for transitive plugin dependencies.
+beforeSettings { settings ->
+    settings.pluginManagement.repositories {
+        mavenCentral()
+        google()
+        gradlePluginPortal()
+    }
+}
