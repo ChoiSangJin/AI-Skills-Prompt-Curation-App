@@ -22,6 +22,7 @@ jobs:
           cache: true
       - run: bash tool/prepare.sh
       - run: flutter analyze --no-fatal-infos
+      - run: flutter test
       - run: flutter build apk --release --target-platform android-arm64
       - uses: actions/upload-artifact@v4
         with:
@@ -33,6 +34,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="build-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI Skills $tag" --notes "Android ARM64 APK. Development signing; not a Play Store release."
+          gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI 모아 $tag" --notes "Android ARM64 APK. Development signing; not a Play Store release."
     permissions:
       contents: write
