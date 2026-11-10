@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'gemini_service.dart';
-import 'package:http/http.dart' as http;
+import 'github_service.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -89,11 +89,6 @@ class _HomeState extends State<Home> {
   final keyInput = TextEditingController();
   final task = TextEditingController();
   final categories = ['All', 'MCP / Agent', 'Coding Rules', 'Prompts'];
-  final topics = [
-    'topic:mcp-server OR topic:model-context-protocol OR topic:agent-skills',
-    'topic:cursor-rules OR topic:claude-code OR topic:coding-agent',
-    'topic:prompt-engineering OR topic:awesome-prompts OR topic:midjourney-prompts'
-  ];
   @override
   void initState() {
     super.initState();
@@ -138,18 +133,8 @@ class _HomeState extends State<Home> {
                   DateTime.now().millisecondsSinceEpoch -
                       (r['updated_at'] as int) <
                   43200000)) continue;
-          final uri = Uri.https('api.github.com', '/search/repositories', {
-            'q': '(${topics[i]}) stars:>${[50, 30, 100][i]}',
-            'sort': 'stars',
-            'order': 'desc',
-            'per_page': '20'
-          });
           try {
-            final response = await http.get(uri, headers: {
-              'Accept': 'application/vnd.github+json'
-            }).timeout(const Duration(seconds: 20));
-            if (response.statusCode != 200) throw Exception('GitHub');
-            final items = (jsonDecode(response.body)['items'] as List);
+            final items = await fetchTrending(i);
             await db.transaction((txn) async {
               for (final item in items) {
                 final old = await txn.query('cached_repos',
@@ -168,10 +153,10 @@ class _HomeState extends State<Home> {
                     conflictAlgorithm: ConflictAlgorithm.replace);
               }
             });
-          } catch (_) {
+          } catch (error) {
             if (mounted)
               setState(() {
-                message = '오프라인 또는 GitHub 사용 한도 초과: 저장된 자료를 표시합니다.';
+                message = friendlyError(error);
               });
           }
         }
@@ -263,7 +248,8 @@ class _HomeState extends State<Home> {
           if (repos.isEmpty)
             const ListTile(
                 title: Text('저장된 저장소가 없습니다'),
-                subtitle: Text('생성 탭에서 API 키 없이 샘플 레시피를 확인하세요.')),
+                subtitle:
+                    Text('새로고침으로 GitHub 자료를 가져오세요. Gemini 키는 필요하지 않습니다.')),
           for (final repo in repos.where((r) =>
               category == 0 || r['topic_category'] == categories[category]))
             Card(
