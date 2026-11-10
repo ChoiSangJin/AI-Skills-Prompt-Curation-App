@@ -45,7 +45,7 @@ if os.environ.get('AI_MOA_TEST_SIGNING')=='1':
 else:
     expected=Path('signing/release-certificate.sha256').read_text().strip()
 if not expected or fingerprint!=expected:
-    fail('Signing certificate differs from the pinned release identity; refusing release.')
+    fail('Signing certificate differs from the pinned release identity; refusing release. Public certificate SHA-256: '+fingerprint)
 (root/'ai-moa-release.store-type').write_text(store_type[1])
 (root/'ai-moa-release.fingerprint').write_text(fingerprint)
 print('Signing credentials and pinned certificate verified; values were not printed.')
