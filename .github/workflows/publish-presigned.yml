@@ -1,0 +1,64 @@
+name: Publish verified signed APK
+on:
+  push:
+    branches: ['release-assets/v*']
+  workflow_dispatch:
+    inputs:
+      asset_ref:
+        description: Branch containing the pre-signed public APK
+        required: true
+        type: string
+      release_tag:
+        description: Release tag (vX.Y.Z)
+        required: true
+        type: string
+permissions:
+  contents: write
+  checks: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ASSET_REF: ${{ inputs.asset_ref || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+      - name: Validate input refs
+        run: |
+          python3 - <<'PY'
+          import os,re
+          tag=os.environ['RELEASE_TAG'] or os.environ['ASSET_REF'].removeprefix('release-assets/')
+          assert re.fullmatch(r'v\d+\.\d+\.\d+',tag), 'Invalid release tag'
+          assert os.environ['ASSET_REF']=='release-assets/'+tag, 'Invalid asset branch'
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('RELEASE_TAG='+tag+'\n')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.ASSET_REF }}
+          path: incoming
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Validate public APK and certificate metadata
+        run: python3 tool/prepare-presigned-publish.py
+      - name: Verify APK cryptographic signature
+        run: python3 tool/verify-apk-signature.py
+      - name: Publish release
+        run: |
+          target=$(python3 -c 'import json; print(json.load(open("incoming/release-info.json"))["source_commit"])')
+          git merge-base --is-ancestor "$target" HEAD
+          if gh release view "$RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            python3 - <<'PY'
+          import json,os
+          assert json.load(open(os.environ['RUNNER_TEMP']+'/existing-release.json'))['isDraft'], 'Refusing to overwrite an existing published release'
+          PY
+            gh release upload "$RELEASE_TAG" build/app/outputs/flutter-apk/app-release.apk incoming/app-release.apk.sha256 signing/release-certificate.sha256 --clobber
+            gh release edit "$RELEASE_TAG" --draft=false --latest --title "AI 모아 $RELEASE_TAG · 고정 배포 서명" --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$RELEASE_TAG" build/app/outputs/flutter-apk/app-release.apk incoming/app-release.apk.sha256 signing/release-certificate.sha256 --target "$target" --latest --title "AI 모아 $RELEASE_TAG · 고정 배포 서명" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
