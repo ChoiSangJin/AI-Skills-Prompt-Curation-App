@@ -16,5 +16,8 @@ fingerprint = hashlib.sha256(cert).hexdigest()
 expected = os.environ['ANDROID_SIGNING_CERT_SHA256'].replace(':', '').lower().strip()
 if fingerprint != expected:
     raise SystemExit('Signing certificate fingerprint mismatch; refusing release.')
+pin = Path('signing/release-certificate.sha256')
+if os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('GITHUB_EVENT_NAME') != 'pull_request' and os.environ.get('AI_MOA_TEST_SIGNING') != '1' and pin.exists() and pin.read_text().strip() != fingerprint:
+    raise SystemExit('Production certificate differs from the pinned release identity.')
 (root / 'ai-moa-release.fingerprint').write_text(fingerprint)
 print('Fixed release keystore restored and fingerprint verified.')

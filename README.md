@@ -55,3 +55,15 @@ This generates one RSA-3072 PKCS12 key with alias `ai-moa`, keeps the encrypted 
 Back up the keystore and password securely outside GitHub and outside the checkout. GitHub Secrets cannot be downloaded later. Never commit, attach to a release, or post the signing key/password. The script refuses to replace existing signing secrets or local backup files. If a partial upload fails, use the retained files to complete secure entry in Settings → Secrets and variables → Actions; do not generate another key.
 
 Main CI restores the key only for production builds, checks its fingerprint, signs the APK, verifies the actual APK signature with apksigner, then removes temporary private files. Preserve the same Secrets for every future release and keep increasing the Android version code. The first move from old development-signed APKs needs a reinstall (which deletes local data); later higher-version APKs signed with the same key can update in place. Release compilation and signature verification are exercised on PRs with a disposable test key, but production signing requires the three Secrets above.
+
+## Preserved local production key (AI Moa)
+
+The production key is kept outside Git at `/workspace/credentials/ai-moa/release.p12`, with its private password file `release.password`. Only the public fingerprint in `signing/release-certificate.sha256` is committed. Preserve this entire credential directory when moving environments and keep a secure independent backup. Never regenerate the key when restoring an environment: the initializer refuses if a public pin exists but the original private key is missing.
+
+For every update, keep application ID `com.choisangjin.ai_skills_curation`, increase `versionCode`, and build with the same key:
+
+```sh
+python3 tool/local-release.py
+```
+
+This checks the private key against the committed public certificate, signs the release and verifies the resulting APK. GitHub Secrets are optional: without them CI creates test-only artifacts and never publishes them as releases. Production APKs can be uploaded from this trusted workspace after verification. Existing development-signed installations require one migration reinstall.

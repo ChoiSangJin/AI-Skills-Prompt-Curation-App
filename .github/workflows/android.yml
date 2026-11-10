@@ -29,11 +29,22 @@ jobs:
       - run: bash tool/prepare.sh
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
+      - name: Check optional production signing availability
+        id: production
+        if: github.event_name != 'pull_request'
+        env:
+          SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SIGNING_CERT: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: |
+          if [ -n "$SIGNING_KEY" ] && [ -n "$SIGNING_PASSWORD" ] && [ -n "$SIGNING_CERT" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Create disposable PR signing fixture
-        if: github.event_name == 'pull_request'
+        if: steps.production.outputs.available != 'true'
         run: python3 tool/create-test-signing.py
       - name: Restore fixed release key
-        if: github.event_name != 'pull_request'
+        if: steps.production.outputs.available == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -65,10 +76,10 @@ jobs:
         run: python3 tool/verify-apk-signature.py
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event_name == 'pull_request' && 'ai-moa-test-signed-apk' || 'ai-moa-release-apk' }}
+          name: ${{ steps.production.outputs.available == 'true' && 'ai-moa-release-apk' || 'ai-moa-test-signed-apk' }}
           path: build/app/outputs/flutter-apk/app-*.apk
       - name: Publish downloadable APK
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && steps.production.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
