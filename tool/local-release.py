@@ -20,12 +20,12 @@ if proxy.hostname:
   lines.extend([f'systemProp.{protocol}.proxyHost={proxy.hostname}',f'systemProp.{protocol}.proxyPort={proxy.port or 80}'])
 properties.write_text('\n'.join(lines)+'\n')
 with tempfile.TemporaryDirectory() as directory:
- env={**os.environ,'RUNNER_TEMP':directory,'GRADLE_USER_HOME':str(gradle),'GITHUB_STEP_SUMMARY':str(Path(directory)/'summary.md'),'ANDROID_KEYSTORE_BASE64':base64.b64encode(key.read_bytes()).decode(),'ANDROID_KEYSTORE_PASSWORD':password.read_text(),'ANDROID_SIGNING_CERT_SHA256':pin.read_text().strip()}
+ env={**os.environ,'RUNNER_TEMP':directory,'GRADLE_USER_HOME':str(gradle),'GITHUB_STEP_SUMMARY':str(Path(directory)/'summary.md'),'ANDROID_KEYSTORE_BASE64':base64.b64encode(key.read_bytes()).decode(),'ANDROID_KEYSTORE_PASSWORD':password.read_text(),'ANDROID_KEY_ALIAS':'ai-moa','ANDROID_KEY_PASSWORD':password.read_text()}
  subprocess.run(['python3','tool/restore-signing.py'],env=env,check=True)
- env.pop('ANDROID_KEYSTORE_BASE64');env.pop('ANDROID_KEYSTORE_PASSWORD')
+ env.pop('ANDROID_KEYSTORE_BASE64');env.pop('ANDROID_KEYSTORE_PASSWORD');env.pop('ANDROID_KEY_PASSWORD')
  subprocess.run(['bash','tool/prepare.sh'],env=env,check=True)
- env.update(ANDROID_RELEASE_KEYSTORE=str(Path(directory)/'ai-moa-release.p12'),ANDROID_RELEASE_PASSWORD=password.read_text())
+ env.update(ANDROID_RELEASE_KEYSTORE=str(Path(directory)/'ai-moa-release.p12'),ANDROID_RELEASE_PASSWORD=password.read_text(),ANDROID_RELEASE_KEY_ALIAS='ai-moa',ANDROID_RELEASE_KEY_PASSWORD=password.read_text(),ANDROID_RELEASE_STORE_TYPE=(Path(directory)/'ai-moa-release.store-type').read_text())
  subprocess.run(['flutter','build','apk','--release','--target-platform','android-arm64'],env=env,check=True)
- env.pop('ANDROID_RELEASE_PASSWORD')
+ env.pop('ANDROID_RELEASE_PASSWORD');env.pop('ANDROID_RELEASE_KEY_PASSWORD')
  subprocess.run(['python3','tool/verify-apk-signature.py'],env=env,check=True)
  print('Production APK signed with the pinned, preserved certificate: build/app/outputs/flutter-apk/app-release.apk')
