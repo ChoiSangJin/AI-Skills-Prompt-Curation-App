@@ -36,4 +36,5 @@ with p.open('wb') as f: plistlib.dump(info, f)
 for icon in Path('assets/branding/ios').glob('*.png'):
     shutil.copyfile(icon, Path('ios/Runner/Assets.xcassets/AppIcon.appiconset') / icon.name)
 PY
+python3 tool/apply-release-signing.py
 flutter pub get
