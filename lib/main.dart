@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'gemini_service.dart';
+import 'summary_loading.dart';
 import 'github_service.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -180,12 +181,16 @@ class _HomeState extends State<Home> {
             });
             return;
           }
-          final output = await gemini.generate(key,
-              'Analyze repository metadata (do not invent installation commands): ${jsonEncode(repo)}');
-          final db = await Store.open();
-          await db.update('cached_repos', output,
-              where: 'repo_name = ?', whereArgs: [repo['repo_name']]);
-          result = {...repo, ...output};
+          if (!mounted) return;
+          result = await withSummaryLoading(
+              context, repo['repo_name'] as String, () async {
+            final output = await gemini.generate(key,
+                'Analyze repository metadata (do not invent installation commands): ${jsonEncode(repo)}');
+            final db = await Store.open();
+            await db.update('cached_repos', output,
+                where: 'repo_name = ?', whereArgs: [repo['repo_name']]);
+            return {...repo, ...output};
+          });
           repos = repos
               .map((r) => r['repo_name'] == repo['repo_name'] ? result : r)
               .toList();
