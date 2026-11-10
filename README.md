@@ -13,11 +13,11 @@ flutter run
 flutter build apk --release --target-platform android-arm64
 ```
 
-The preparation script generates Android/iOS scaffolding without replacing Dart code, restricts Android native ABIs to ARM64, enables Internet access, and disables Android backup. iOS builds require macOS/Xcode; verify Keychain entitlements and signing on the target device. Android release builds currently use Flutter's development signing configuration. Configure a persistent private release keystore before production distribution; builds signed by different temporary keys cannot update each other in place.
+The preparation script generates Android/iOS scaffolding without replacing Dart code, restricts Android native ABIs to ARM64, enables Internet access, and disables Android backup. iOS builds require macOS/Xcode; verify Keychain entitlements and signing on the target device. Android release builds require the fixed private release keystore. Missing signing credentials fail the release build; there is no debug-signing fallback.
 
 ## Download
 
-After CI succeeds on main, open this repository's **Releases** page and download `app-release.apk`. It supports Android ARM64 devices. Pull requests expose an APK as a workflow artifact instead. GitHub Actions must be enabled and allowed to create releases.
+After CI succeeds on main, open this repository's **Releases** page and download `app-release.apk`. It supports Android ARM64 devices. Pull requests expose a clearly labeled test-signed APK using a disposable certificate; production signing secrets are not used on PR runs. Do not install PR test APKs as updates to production. GitHub Actions must be enabled and allowed to create releases.
 
 ## Verification status
 
@@ -37,3 +37,21 @@ The app discovers currently available text-generation models with `models.list` 
 Provider response bodies and API keys are never shown in error messages. Tests use mocked HTTP responses; a user-owned live key and device remain necessary for real quota and storage validation.
 
 Brand palette: #FFC7C7, #FFE2E2, #F6F6F6, #8785A2, with dark text for contrast. Launcher source and pre-sized Android/iOS icons are checked in under assets/branding; platform preparation applies them on every build.
+
+## One-time fixed release signing setup
+
+Use a trusted computer with Java 17/keytool, Python 3 and GitHub CLI authenticated as a repository administrator. From this checkout, run:
+
+```sh
+bash tool/configure-release-signing.sh /absolute/private/ai-moa-signing-backup
+```
+
+This generates one RSA-3072 PKCS12 key with alias `ai-moa`, keeps the encrypted keystore and password in the private backup directory, and uploads these encrypted repository Actions Secrets:
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_SIGNING_CERT_SHA256` (public certificate fingerprint used as a consistency check)
+
+Back up the keystore and password securely outside GitHub and outside the checkout. GitHub Secrets cannot be downloaded later. Never commit, attach to a release, or post the signing key/password. The script refuses to replace existing signing secrets or local backup files. If a partial upload fails, use the retained files to complete secure entry in Settings → Secrets and variables → Actions; do not generate another key.
+
+Main CI restores the key only for production builds, checks its fingerprint, signs the APK, verifies the actual APK signature with apksigner, then removes temporary private files. Preserve the same Secrets for every future release and keep increasing the Android version code. The first move from old development-signed APKs needs a reinstall (which deletes local data); later higher-version APKs signed with the same key can update in place. Release compilation and signature verification are exercised on PRs with a disposable test key, but production signing requires the three Secrets above.

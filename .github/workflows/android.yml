@@ -29,12 +29,22 @@ jobs:
       - run: bash tool/prepare.sh
       - run: flutter analyze --no-fatal-infos
       - run: flutter test
+      - name: Create disposable PR signing fixture
+        if: github.event_name == 'pull_request'
+        run: python3 tool/create-test-signing.py
+      - name: Restore fixed release key
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ secrets.ANDROID_SIGNING_CERT_SHA256 }}
+        run: python3 tool/restore-signing.py
       - name: Build ARM64 APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
-          flutter build apk --release --target-platform android-arm64 > "$RUNNER_TEMP/apk-build.log" 2>&1
+          ANDROID_RELEASE_KEYSTORE="$RUNNER_TEMP/ai-moa-release.p12" ANDROID_RELEASE_PASSWORD="$(cat "$RUNNER_TEMP/ai-moa-release.password")" flutter build apk --release --target-platform android-arm64 > "$RUNNER_TEMP/apk-build.log" 2>&1
           result=$?
           cat "$RUNNER_TEMP/apk-build.log"
           if [ "$result" -ne 0 ]; then
@@ -49,17 +59,34 @@ jobs:
             gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$RUNNER_TEMP/apk-diagnostics.json" > /dev/null
           fi
           exit "$result"
+      - name: Verify APK signature
+        run: |
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          "$signer" verify --verbose --print-certs build/app/outputs/flutter-apk/app-release.apk > "$RUNNER_TEMP/apk-signature.txt"
+          python3 - <<'PYCODE'
+          import os,re
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])
+          report=(root/'apk-signature.txt').read_text()
+          actual=re.search(r'Signer #1 certificate SHA-256 digest: ([0-9a-fA-F]+)',report)
+          expected=(root/'ai-moa-release.fingerprint').read_text().strip()
+          assert actual and actual[1].lower()==expected, 'APK signing certificate mismatch'
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f: f.write('APK certificate SHA-256 (PR certificates are disposable tests): `'+expected+'`\n')
+          PYCODE
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-skills-arm64-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ github.event_name == 'pull_request' && 'ai-moa-test-signed-apk' || 'ai-moa-release-apk' }}
+          path: build/app/outputs/flutter-apk/app-*.apk
       - name: Publish downloadable APK
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="build-${GITHUB_RUN_NUMBER}"
-          gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI 모아 $tag" --notes "Android ARM64 APK. Development signing; not a Play Store release."
+          gh release create "$tag" build/app/outputs/flutter-apk/app-release.apk --target "$GITHUB_SHA" --title "AI 모아 $tag" --notes "Android ARM64 APK. Signed with the fixed AI Moa release certificate. The first migration from development builds requires a reinstall; later higher-version builds use the same certificate."
+      - name: Remove ephemeral signing files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ai-moa-release.p12" "$RUNNER_TEMP/ai-moa-release.password"
     permissions:
       contents: write
       checks: write
