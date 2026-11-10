@@ -38,17 +38,13 @@ Provider response bodies and API keys are never shown in error messages. Tests u
 
 Brand palette: #FFC7C7, #FFE2E2, #F6F6F6, #8785A2, with dark text for contrast. Launcher source and pre-sized Android/iOS icons are checked in under assets/branding; platform preparation applies them on every build.
 
-## Preserved local production key (AI Moa)
+## Release identity migration in v1.1.4
 
-The production key is kept outside Git at `/workspace/credentials/ai-moa/release.p12`, with its private password file `release.password`. Only the public fingerprint in `signing/release-certificate.sha256` is committed. Preserve this entire credential directory when moving environments and keep a secure independent backup. Never regenerate the key when restoring an environment: the initializer refuses if a public pin exists but the original private key is missing.
+Starting with v1.1.4 (versionCode 6), production releases use the four registered GitHub signing Secrets below. The user approved this one-time migration from the v1.1.3 certificate; uninstall/reinstall is required for that transition and removes local app data. Later releases keep this new certificate and increase versionCode to support in-place updates. The application ID remains `com.choisangjin.ai_skills_curation`.
 
-For every update, keep application ID `com.choisangjin.ai_skills_curation`, increase `versionCode`, and build with the same key:
+The current public certificate pin is `signing/release-certificate.sha256`. Its check remains mandatory: do not regenerate or replace the registered signing identity on subsequent builds.
 
-```sh
-python3 tool/local-release.py
-```
-
-This checks the private key against the committed public certificate, signs the release and verifies the resulting APK. Production CI requires the four registered Android signing Secrets and fails closed if any are missing. PRs use disposable test keys only. Production APKs can be uploaded from this trusted workspace after verification. Existing development-signed installations require one migration reinstall.
+The previous v1.1.3 local keystore remains preserved at `/workspace/credentials/ai-moa/release.p12` with its password file. Its public fingerprint is archived at `signing/legacy/v1.1.3-certificate.sha256`. This is a legacy backup, not the v1.1.4 production signing identity. Keep it securely and never upload it to a public branch or release. The local legacy build helper correctly refuses to sign a new release when its certificate differs from the current pin.
 
 ### GitHub Actions production signing
 
@@ -61,7 +57,7 @@ Use the already registered repository Secrets; do not regenerate or overwrite th
 
 The alias and private-key password are independent inputs. JKS and PKCS12 keystores are detected automatically. No extra certificate Secret is needed: the public certificate is checked against `signing/release-certificate.sha256` and a mismatch stops the release to protect in-place updates. PRs validate the release path with a disposable JKS key using a different alias and distinct store/key passwords; production Secrets are never passed to PR jobs. Temporary credential files are removed after every run.
 
-The local preserved-key workflow remains available as a fallback. `tool/configure-release-signing.sh` is only for first-time setup in a different repository without existing signing Secrets; it refuses to overwrite registered ones. No setup or Secret updates are required for this repository.
+No Secret setup or value updates are required for this repository. The existing registration helper is a legacy utility and refuses to overwrite registered Secrets; it is not part of the v1.1.4 release flow.
 
 ### Publishing an already signed local APK
 
