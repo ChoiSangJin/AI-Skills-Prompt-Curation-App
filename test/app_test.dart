@@ -16,15 +16,12 @@ void main() {
     // Built-in examples work without a key and follow the purpose chip.
     await tester.tap(find.text('이미지 생성'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('제품 사진'));
+    await tester.ensureVisible(find.text('예시 먼저 보기'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('복사'));
+    await tester.tap(find.text('예시 먼저 보기'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('복사'));
-    // Check before the one-second snackbar is dismissed.
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('복사했어요'), findsOneWidget);
-    await tester.pumpAndSettle();
+    expect(find.text('오프라인 예시'), findsOneWidget);
+    expect(find.text('프롬프트 복사'), findsOneWidget);
     await tester.tap(find.text('보관함'));
     await tester.pumpAndSettle();
     expect(find.text('트렌딩 카드의 북마크 버튼으로 저장하세요.'), findsOneWidget);

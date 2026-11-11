@@ -6,6 +6,7 @@ import 'gemini_service.dart';
 import 'summary_loading.dart';
 import 'github_service.dart';
 import 'prompt_library.dart';
+import 'prompt_studio.dart';
 import 'repo_detail.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
@@ -136,6 +137,9 @@ class _HomeState extends State<Home> {
   // Cached rising repos for the overview card, whatever feed is selected.
   List<Map<String, dynamic>> risingTop = [];
   Map<String, dynamic>? recipe;
+  String recipeTitle = '';
+  bool recipeIsSample = false;
+  bool recipeSaved = false;
   final gemini = GeminiService();
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
   final keyInput = TextEditingController();
@@ -200,7 +204,8 @@ class _HomeState extends State<Home> {
         if (!visitLoaded) {
           final row = await db
               .query('meta', where: 'key = ?', whereArgs: ['last_visit']);
-          lastVisit = row.isEmpty ? null : int.parse(row.first['value'] as String);
+          lastVisit =
+              row.isEmpty ? null : int.parse(row.first['value'] as String);
           visitLoaded = true;
         }
         for (int i = 0; i < categoryNames.length; i++) {
@@ -251,10 +256,13 @@ class _HomeState extends State<Home> {
         }
         // Written after this session's first fetch so repos seen now are
         // not reported as NEW on the next launch.
-        await db.insert('meta', {
-          'key': 'last_visit',
-          'value': '${DateTime.now().millisecondsSinceEpoch}'
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await db.insert(
+            'meta',
+            {
+              'key': 'last_visit',
+              'value': '${DateTime.now().millisecondsSinceEpoch}'
+            },
+            conflictAlgorithm: ConflictAlgorithm.replace);
         await refreshLocal(db);
       });
 
@@ -317,6 +325,7 @@ class _HomeState extends State<Home> {
     await refreshLocal(db);
     return isBookmarked(repo);
   }
+
   // Called from the detail page. The key check happens before the loading
   // modal so a missing key does not flash a spinner.
   Future<Map<String, dynamic>> summarize(Map<String, dynamic> repo) async {
@@ -354,8 +363,8 @@ class _HomeState extends State<Home> {
     return output;
   }
 
-  void openDetail(Map<String, dynamic> repo) => Navigator.of(context).push(
-      MaterialPageRoute<void>(
+  void openDetail(Map<String, dynamic> repo) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(
           builder: (_) => RepoDetail(
               repo: repo,
               summarize: summarize,
@@ -429,8 +438,8 @@ class _HomeState extends State<Home> {
               padding: const EdgeInsets.symmetric(horizontal: 12),
               child: SegmentedButton<Feed>(
                   showSelectedIcon: false,
-                  style: const ButtonStyle(
-                      visualDensity: VisualDensity.compact),
+                  style:
+                      const ButtonStyle(visualDensity: VisualDensity.compact),
                   segments: const [
                     ButtonSegment(
                         value: Feed.popular,
@@ -595,6 +604,7 @@ class _HomeState extends State<Home> {
                           style: muted),
                     ]))));
   }
+
   // In "All" a repo matching several categories is shown only once.
   List<Map<String, dynamic>> visibleRepos() {
     final seen = <String>{};
@@ -622,82 +632,80 @@ class _HomeState extends State<Home> {
         const SnackBar(content: Text('복사했어요'), duration: Duration(seconds: 1)));
   }
 
-  Widget generator() => ListView(padding: const EdgeInsets.all(16), children: [
-        // The purpose drives both the Gemini output format and the examples.
-        Wrap(spacing: 8, children: [
-          for (final item in purposes)
-            ChoiceChip(
-                label: Text(item),
-                selected: purpose == item,
-                onSelected: (_) => setState(() => purpose = item))
-        ]),
-        const SizedBox(height: 8),
-        TextField(
-            controller: task,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: '어떤 작업을 하고 싶나요?')),
-        FilledButton(
-            onPressed: busy
-                ? null
-                : () => run(() async {
-                      final key = await Store.secure.read(key: 'gemini');
-                      if (key == null) {
-                        setState(() => message =
-                            '설정에서 Gemini 키를 등록하세요. 아래 기본 예제는 키 없이 쓸 수 있어요.');
-                        return;
-                      }
-                      if (task.text.trim().isEmpty) {
-                        throw const ApiFailure('먼저 작업 내용을 입력해 주세요.');
-                      }
-                      final result = await gemini.generate(
-                          key, '${purposeGuides[purpose]}\nTask: ${task.text}');
-                      if (mounted) setState(() => recipe = result);
-                    }),
-            child: const Text('추천 및 프롬프트 생성')),
-        if (recipe != null) ...[
-          SelectableText(
-              '${recipe!['use_case_summary']}\n\n${recipe!['target_audience']}\n\n${recipe!['execution_snippet']}'),
-          TextButton(
-              onPressed: () => copy(recipe!['execution_snippet']),
-              child: const Text('프롬프트 복사')),
-          TextButton(
-              onPressed: () => run(() async {
-                    final db = await Store.open();
-                    final now = DateTime.now().millisecondsSinceEpoch;
-                    await db.insert('saved_prompts', {
-                      'id': '$now',
-                      'title': task.text.isEmpty ? purpose : task.text,
-                      'content': recipe!['execution_snippet'],
-                      'category': purpose,
-                      'created_at': now
-                    });
-                    final rows = await db.query('saved_prompts',
-                        orderBy: 'created_at DESC');
-                    if (!mounted) return;
-                    setState(() => saved = rows);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('보관함에 저장했어요')));
-                  }),
-              child: const Text('저장'))
-        ],
-        const Divider(),
-        Text('$purpose 기본 예제 (키 없이 사용)'),
-        for (final item in promptLibrary.where((p) => p.purpose == purpose))
-          ExpansionTile(title: Text(item.title), children: [
-            SelectableText(item.content),
-            TextButton(
-                onPressed: () => copy(item.content), child: const Text('복사'))
-          ]),
-      ]);
+  Widget generator() => PromptStudio(
+        controller: task,
+        busy: busy,
+        purpose: purpose,
+        onPurposeChanged: (value) => setState(() => purpose = value),
+        recipe: recipe,
+        recipeTitle: recipeTitle,
+        isSample: recipeIsSample,
+        recipeSaved: recipeSaved,
+        saved: saved,
+        onGenerate: (request) async => run(() async {
+          final key = await Store.secure.read(key: 'gemini');
+          if (key == null) {
+            throw const ApiFailure('설정에서 Gemini 키를 먼저 등록해 주세요.');
+          }
+          final result = await gemini.generate(
+              key, '${purposeGuides[purpose]}\nTask: $request');
+          if (mounted) {
+            setState(() {
+              recipe = result;
+              recipeTitle = request;
+              recipeIsSample = false;
+              recipeSaved = false;
+            });
+          }
+        }),
+        onSample: (item) {
+          setState(() {
+            recipe = {
+              'use_case_summary':
+                  '${item.purpose} 작업을 바로 시작할 수 있도록 목적과 결과 형식이 포함된 기본 프롬프트입니다.',
+              'target_audience': '프롬프트 구조를 참고하거나 그대로 수정해 사용하려는 분',
+              'execution_snippet': item.content,
+            };
+            recipeTitle = item.title;
+            recipeIsSample = true;
+            recipeSaved = false;
+          });
+        },
+        onSave: () async {
+          if (recipe == null || recipeSaved) return;
+          final savingRecipe = recipe;
+          final savingTitle = recipeTitle;
+          final savingPurpose = purpose;
+          await run(() async {
+            final db = await Store.open();
+            final now = DateTime.now().millisecondsSinceEpoch;
+            await db.insert('saved_prompts', {
+              'id': '$now',
+              'title': savingTitle,
+              'content': savingRecipe!['execution_snippet'],
+              'category': savingPurpose,
+              'created_at': now
+            });
+            final rows =
+                await db.query('saved_prompts', orderBy: 'created_at DESC');
+            if (!mounted) return;
+            setState(() {
+              saved = rows;
+              if (identical(recipe, savingRecipe)) recipeSaved = true;
+            });
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('보관함에 저장했어요')));
+          });
+        },
+      );
 
   // Cards carry their own side margin, so only text rows get padding here.
-  Widget library() => ListView(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          children: [
-            const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Text('북마크한 저장소',
-                    style: TextStyle(fontWeight: FontWeight.bold))),
+  Widget library() =>
+      ListView(padding: const EdgeInsets.symmetric(vertical: 8), children: [
+        const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Text('북마크한 저장소',
+                style: TextStyle(fontWeight: FontWeight.bold))),
         if (bookmarks.isEmpty)
           const ListTile(title: Text('트렌딩 카드의 북마크 버튼으로 저장하세요.')),
         for (final repo in bookmarks) repoCard(repo),
