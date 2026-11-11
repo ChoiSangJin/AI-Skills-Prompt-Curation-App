@@ -14,6 +14,8 @@ String ago(int millis, {DateTime? now}) {
   return '${diff.inDays}일 전';
 }
 
+const summaryFields = ['use_case_summary', 'target_audience', 'execution_snippet'];
+
 /// Repository details that work without a Gemini key; the AI summary is an
 /// optional action on this page instead of a requirement for opening it.
 class RepoDetail extends StatefulWidget {
@@ -22,13 +24,23 @@ class RepoDetail extends StatefulWidget {
   /// Returns the summary fields; throws ApiFailure with a user message.
   final Future<Map<String, dynamic>> Function(Map<String, dynamic> repo)
       summarize;
-  const RepoDetail({super.key, required this.repo, required this.summarize});
+  final bool bookmarked;
+
+  /// Returns the bookmark state after toggling.
+  final Future<bool> Function(Map<String, dynamic> repo) toggleBookmark;
+  const RepoDetail(
+      {super.key,
+      required this.repo,
+      required this.summarize,
+      required this.bookmarked,
+      required this.toggleBookmark});
   @override
   State<RepoDetail> createState() => _RepoDetailState();
 }
 
 class _RepoDetailState extends State<RepoDetail> {
   late Map<String, dynamic> repo = widget.repo;
+  late bool bookmarked = widget.bookmarked;
   bool busy = false;
   String error = '';
 
@@ -60,7 +72,15 @@ class _RepoDetailState extends State<RepoDetail> {
     final pushed = DateTime.tryParse(repo['pushed_at'] as String? ?? '');
     final hasSummary = repo['use_case_summary'] != null;
     return Scaffold(
-        appBar: AppBar(title: Text(repo['repo_name'])),
+        appBar: AppBar(title: Text(repo['repo_name']), actions: [
+          IconButton(
+              tooltip: '북마크',
+              icon: Icon(bookmarked ? Icons.bookmark : Icons.bookmark_border),
+              onPressed: () async {
+                final state = await widget.toggleBookmark(repo);
+                if (mounted) setState(() => bookmarked = state);
+              })
+        ]),
         body: ListView(padding: const EdgeInsets.all(16), children: [
           Text(repo['original_description'] as String? ?? ''),
           const SizedBox(height: 12),

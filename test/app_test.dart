@@ -54,6 +54,8 @@ void main() {
           'topics': '["agent-skills"]',
           'pushed_at': '2026-01-01T00:00:00Z',
         },
+            bookmarked: false,
+            toggleBookmark: (_) async => true,
             summarize: (_) async =>
                 throw const ApiFailure('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'))));
     expect(find.text('★ 42'), findsOneWidget);
@@ -61,5 +63,8 @@ void main() {
     await tester.tap(find.text('AI 요약 보기 (Gemini 키 필요)'));
     await tester.pumpAndSettle();
     expect(find.text('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'), findsOneWidget);
+    await tester.tap(find.byTooltip('북마크'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.bookmark), findsOneWidget);
   });
 }

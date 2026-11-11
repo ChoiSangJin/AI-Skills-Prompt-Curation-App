@@ -27,6 +27,14 @@ class Store {
         'CREATE TABLE cached_repos(repo_name TEXT NOT NULL, feed TEXT NOT NULL, topic_category TEXT NOT NULL, repo_url TEXT NOT NULL, star_count INTEGER NOT NULL, original_description TEXT, language TEXT, topics TEXT, pushed_at TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(repo_name, feed, topic_category))');
     await db.execute(
         'CREATE TABLE IF NOT EXISTS summaries(repo_name TEXT PRIMARY KEY, use_case_summary TEXT NOT NULL, target_audience TEXT NOT NULL, execution_snippet TEXT NOT NULL)');
+    // Bookmarks keep a JSON snapshot so they survive cache refreshes.
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS bookmarks(repo_name TEXT PRIMARY KEY, data TEXT NOT NULL, created_at INTEGER NOT NULL)');
+    // First time each repo appeared, for the NEW badge.
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS seen_repos(repo_name TEXT PRIMARY KEY, first_seen_at INTEGER NOT NULL)');
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   }
 
   static Future<Database> open() async =>
@@ -106,6 +114,13 @@ class _HomeState extends State<Home> {
   String message = '';
   List<Map<String, dynamic>> repos = [];
   List<Map<String, dynamic>> saved = [];
+  List<Map<String, dynamic>> bookmarks = [];
+  Map<String, int> firstSeen = {};
+  // End of the previous app session; null until known or on first launch.
+  int? lastVisit;
+  bool visitLoaded = false;
+  String search = '';
+  bool sortByUpdated = false;
   Map<String, dynamic>? recipe;
   final gemini = GeminiService();
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
@@ -150,6 +165,12 @@ class _HomeState extends State<Home> {
   // Only the selected feed is fetched to stay within GitHub's search limit.
   Future<void> load({bool force = false}) => run(() async {
         final db = await Store.open();
+        if (!visitLoaded) {
+          final row = await db
+              .query('meta', where: 'key = ?', whereArgs: ['last_visit']);
+          lastVisit = row.isEmpty ? null : int.parse(row.first['value'] as String);
+          visitLoaded = true;
+        }
         for (int i = 0; i < categoryNames.length; i++) {
           const where = 'feed = ? AND topic_category = ?';
           final args = [feed.name, categoryNames[i]];
@@ -181,6 +202,9 @@ class _HomeState extends State<Home> {
                   'pushed_at': item['pushed_at'],
                   'updated_at': now
                 });
+                await txn.insert('seen_repos',
+                    {'repo_name': item['full_name'], 'first_seen_at': now},
+                    conflictAlgorithm: ConflictAlgorithm.ignore);
               }
             });
           } catch (error) {
@@ -193,17 +217,71 @@ class _HomeState extends State<Home> {
                 (error.status == 403 || error.status == 429)) break;
           }
         }
-        final rows = await db.rawQuery(
-            'SELECT c.*, s.use_case_summary, s.target_audience, s.execution_snippet FROM cached_repos c LEFT JOIN summaries s ON s.repo_name = c.repo_name WHERE c.feed = ? ORDER BY c.star_count DESC',
-            [feed.name]);
-        final prompts =
-            await db.query('saved_prompts', orderBy: 'created_at DESC');
-        if (mounted)
-          setState(() {
-            repos = rows;
-            saved = prompts;
-          });
+        // Written after this session's first fetch so repos seen now are
+        // not reported as NEW on the next launch.
+        await db.insert('meta', {
+          'key': 'last_visit',
+          'value': '${DateTime.now().millisecondsSinceEpoch}'
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+        await refreshLocal(db);
       });
+
+  // Reload everything shown from the local database.
+  Future<void> refreshLocal(Database db) async {
+    final rows = await db.rawQuery(
+        'SELECT c.*, s.use_case_summary, s.target_audience, s.execution_snippet FROM cached_repos c LEFT JOIN summaries s ON s.repo_name = c.repo_name WHERE c.feed = ? ORDER BY c.star_count DESC',
+        [feed.name]);
+    final prompts = await db.query('saved_prompts', orderBy: 'created_at DESC');
+    final marked = await db.rawQuery(
+        'SELECT b.data, s.use_case_summary, s.target_audience, s.execution_snippet FROM bookmarks b LEFT JOIN summaries s ON s.repo_name = b.repo_name ORDER BY b.created_at DESC');
+    final seen = await db.query('seen_repos');
+    if (mounted)
+      setState(() {
+        repos = rows;
+        saved = prompts;
+        bookmarks = [
+          for (final row in marked)
+            {
+              ...jsonDecode(row['data'] as String) as Map<String, dynamic>,
+              for (final field in summaryFields) field: row[field]
+            }
+        ];
+        firstSeen = {
+          for (final row in seen)
+            row['repo_name'] as String: row['first_seen_at'] as int
+        };
+      });
+  }
+
+  bool isNew(Map<String, dynamic> repo) =>
+      lastVisit != null && (firstSeen[repo['repo_name']] ?? 0) > lastVisit!;
+
+  bool isBookmarked(Map<String, dynamic> repo) =>
+      bookmarks.any((b) => b['repo_name'] == repo['repo_name']);
+
+  // Returns the new bookmark state for the detail page.
+  Future<bool> toggleBookmark(Map<String, dynamic> repo) async {
+    final db = await Store.open();
+    if (isBookmarked(repo)) {
+      await db.delete('bookmarks',
+          where: 'repo_name = ?', whereArgs: [repo['repo_name']]);
+    } else {
+      await db.insert(
+          'bookmarks',
+          {
+            'repo_name': repo['repo_name'],
+            // Summaries are joined from their own table, not snapshotted.
+            'data': jsonEncode({
+              for (final entry in repo.entries)
+                if (!summaryFields.contains(entry.key)) entry.key: entry.value
+            }),
+            'created_at': DateTime.now().millisecondsSinceEpoch
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await refreshLocal(db);
+    return isBookmarked(repo);
+  }
   // Called from the detail page. The key check happens before the loading
   // modal so a missing key does not flash a spinner.
   Future<Map<String, dynamic>> summarize(Map<String, dynamic> repo) async {
@@ -234,20 +312,20 @@ class _HomeState extends State<Home> {
       final db = await Store.open();
       await db.insert('summaries', {'repo_name': name, ...result},
           conflictAlgorithm: ConflictAlgorithm.replace);
+      // Updates every row of this repo, including bookmarks.
+      await refreshLocal(db);
       return result;
     });
-    // Merge only the summary fields: the same repo can appear in several
-    // categories and must keep its own category row.
-    if (mounted)
-      setState(() => repos = repos
-          .map((r) => r['repo_name'] == name ? {...r, ...output} : r)
-          .toList());
     return output;
   }
 
   void openDetail(Map<String, dynamic> repo) => Navigator.of(context).push(
       MaterialPageRoute<void>(
-          builder: (_) => RepoDetail(repo: repo, summarize: summarize)));
+          builder: (_) => RepoDetail(
+              repo: repo,
+              summarize: summarize,
+              bookmarked: isBookmarked(repo),
+              toggleBookmark: toggleBookmark)));
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -258,6 +336,7 @@ class _HomeState extends State<Home> {
           destinations: const [
             NavigationDestination(icon: Icon(Icons.explore), label: '트렌딩'),
             NavigationDestination(icon: Icon(Icons.auto_awesome), label: '생성'),
+            NavigationDestination(icon: Icon(Icons.bookmarks), label: '보관함'),
             NavigationDestination(icon: Icon(Icons.key), label: '설정')
           ]),
       body: Column(children: [
@@ -269,7 +348,9 @@ class _HomeState extends State<Home> {
                 ? trending()
                 : page == 1
                     ? generator()
-                    : settings())
+                    : page == 2
+                        ? library()
+                        : settings())
       ]));
   Widget trending() => Column(children: [
         Padding(
@@ -296,6 +377,25 @@ class _HomeState extends State<Home> {
                         label: Text(categories[i]),
                         selected: category == i,
                         onSelected: (_) => setState(() => category = i))))),
+        Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(children: [
+              Expanded(
+                  child: TextField(
+                      decoration: const InputDecoration(
+                          isDense: true,
+                          prefixIcon: Icon(Icons.search),
+                          hintText: '이름·설명 검색'),
+                      onChanged: (v) => setState(() => search = v))),
+              const SizedBox(width: 8),
+              DropdownButton<bool>(
+                  value: sortByUpdated,
+                  items: const [
+                    DropdownMenuItem(value: false, child: Text('스타순')),
+                    DropdownMenuItem(value: true, child: Text('최근 업데이트순')),
+                  ],
+                  onChanged: (v) => setState(() => sortByUpdated = v!)),
+            ])),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           TextButton(
               onPressed: busy ? null : () => load(force: true),
@@ -312,27 +412,50 @@ class _HomeState extends State<Home> {
                 title: Text('저장된 저장소가 없습니다'),
                 subtitle:
                     Text('새로고침으로 GitHub 자료를 가져오세요. Gemini 키는 필요하지 않습니다.')),
-          for (final repo in visibleRepos())
-            Card(
-                child: ListTile(
-                    title: Text(repo['repo_name']),
-                    subtitle: Text(
-                        '★ ${repo['star_count']} · ${repo['topic_category']}\n${repo['original_description']}'),
-                    onTap: () => openDetail(repo),
-                    trailing: IconButton(
-                        icon: const Icon(Icons.open_in_new),
-                        onPressed: () => launchUrl(Uri.parse(repo['repo_url']),
-                            mode: LaunchMode.externalApplication))))
+          for (final repo in visibleRepos()) repoCard(repo)
         ]))
       ]);
+
+  Widget repoCard(Map<String, dynamic> repo) => Card(
+      child: ListTile(
+          title: Row(children: [
+            Flexible(child: Text(repo['repo_name'])),
+            if (isNew(repo))
+              Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary,
+                      borderRadius: BorderRadius.circular(8)),
+                  child: const Text('NEW', style: TextStyle(fontSize: 11))),
+          ]),
+          subtitle: Text(
+              '★ ${repo['star_count']} · ${repo['topic_category']}\n${repo['original_description']}'),
+          onTap: () => openDetail(repo),
+          trailing: IconButton(
+              tooltip: '북마크',
+              icon: Icon(
+                  isBookmarked(repo) ? Icons.bookmark : Icons.bookmark_border),
+              onPressed: () => toggleBookmark(repo))));
   // In "All" a repo matching several categories is shown only once.
   List<Map<String, dynamic>> visibleRepos() {
     final seen = <String>{};
-    return repos
+    final query = search.trim().toLowerCase();
+    final list = repos
         .where((r) =>
             (category == 0 || r['topic_category'] == categories[category]) &&
+            (query.isEmpty ||
+                '${r['repo_name']} ${r['original_description']}'
+                    .toLowerCase()
+                    .contains(query)) &&
             seen.add(r['repo_name'] as String))
         .toList();
+    // Rows already arrive sorted by stars; ISO dates sort as strings.
+    if (sortByUpdated)
+      list.sort((a, b) =>
+          (b['pushed_at'] as String? ?? '').compareTo(a['pushed_at'] ?? ''));
+    return list;
   }
 
   // Copy with visible feedback so users know the tap worked.
@@ -393,7 +516,10 @@ class _HomeState extends State<Home> {
                     });
                     final rows = await db.query('saved_prompts',
                         orderBy: 'created_at DESC');
-                    if (mounted) setState(() => saved = rows);
+                    if (!mounted) return;
+                    setState(() => saved = rows);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('보관함에 저장했어요')));
                   }),
               child: const Text('저장'))
         ],
@@ -405,13 +531,32 @@ class _HomeState extends State<Home> {
             TextButton(
                 onPressed: () => copy(item.content), child: const Text('복사'))
           ]),
-        const Divider(),
-        const Text('저장한 프롬프트'),
+      ]);
+
+  Widget library() => ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('북마크한 저장소', style: TextStyle(fontWeight: FontWeight.bold)),
+        if (bookmarks.isEmpty)
+          const ListTile(title: Text('트렌딩 카드의 북마크 버튼으로 저장하세요.')),
+        for (final repo in bookmarks) repoCard(repo),
+        const Divider(height: 32),
+        const Text('저장한 프롬프트', style: TextStyle(fontWeight: FontWeight.bold)),
+        if (saved.isEmpty)
+          const ListTile(title: Text('생성 탭에서 만든 프롬프트를 저장하세요.')),
         for (final item in saved)
           ListTile(
               title: Text(item['title']),
-              subtitle: Text(item['content']),
-              onTap: () => copy(item['content']))
+              subtitle: Text('[${item['category']}] ${item['content']}',
+                  maxLines: 3, overflow: TextOverflow.ellipsis),
+              onTap: () => copy(item['content']),
+              trailing: IconButton(
+                  tooltip: '삭제',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => run(() async {
+                        final db = await Store.open();
+                        await db.delete('saved_prompts',
+                            where: 'id = ?', whereArgs: [item['id']]);
+                        await refreshLocal(db);
+                      })))
       ]);
   Widget settings() => ListView(padding: const EdgeInsets.all(16), children: [
         const Text(
