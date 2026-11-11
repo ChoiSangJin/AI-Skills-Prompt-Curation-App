@@ -79,4 +79,15 @@ void main() {
       expect(count, greaterThanOrEqualTo(pageSize ~/ githubTopics[0].length));
     }
   });
+  test('README is truncated, and failures fall back to metadata only',
+      () async {
+    final long = MockClient((request) async {
+      expect(request.url.path, '/repos/a/repo/readme');
+      expect(request.headers['Accept'], 'application/vnd.github.raw+json');
+      return http.Response('x' * (readmeLimit + 100), 200);
+    });
+    expect((await fetchReadme('a/repo', client: long))!.length, readmeLimit);
+    final missing = MockClient((_) async => http.Response('{}', 404));
+    expect(await fetchReadme('a/repo', client: missing), isNull);
+  });
 }

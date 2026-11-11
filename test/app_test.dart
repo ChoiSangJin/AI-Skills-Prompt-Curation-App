@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ai_skills_curation/main.dart';
+import 'package:ai_skills_curation/repo_detail.dart';
+import 'package:ai_skills_curation/gemini_service.dart';
 
 void main() {
   testWidgets(
@@ -37,5 +39,27 @@ void main() {
     expect(ago(before(const Duration(minutes: 5)), now: now), '5분 전');
     expect(ago(before(const Duration(hours: 3)), now: now), '3시간 전');
     expect(ago(before(const Duration(days: 2)), now: now), '2일 전');
+  });
+  testWidgets('repo detail opens without a key and shows summary errors',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+        home: RepoDetail(
+            repo: const {
+          'repo_name': 'a/repo',
+          'repo_url': 'https://github.com/a/repo',
+          'star_count': 42,
+          'original_description': '설명',
+          'topic_category': 'Skills',
+          'language': 'Python',
+          'topics': '["agent-skills"]',
+          'pushed_at': '2026-01-01T00:00:00Z',
+        },
+            summarize: (_) async =>
+                throw const ApiFailure('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'))));
+    expect(find.text('★ 42'), findsOneWidget);
+    expect(find.text('토픽: agent-skills'), findsOneWidget);
+    await tester.tap(find.text('AI 요약 보기 (Gemini 키 필요)'));
+    await tester.pumpAndSettle();
+    expect(find.text('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'), findsOneWidget);
   });
 }

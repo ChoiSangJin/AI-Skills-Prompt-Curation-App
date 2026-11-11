@@ -99,3 +99,27 @@ Future<List<dynamic>> fetchTrending(int category,
     if (owned) client.close();
   }
 }
+
+const readmeLimit = 6000;
+
+/// README excerpt used to ground AI summaries. Returns null on any failure:
+/// the summary still works from metadata alone.
+Future<String?> fetchReadme(String fullName, {http.Client? client}) async {
+  final owned = client == null;
+  client ??= http.Client();
+  try {
+    final response = await client.get(
+        Uri.https('api.github.com', '/repos/$fullName/readme'),
+        headers: {
+          'Accept': 'application/vnd.github.raw+json',
+          'User-Agent': 'AI-Moa',
+        }).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) return null;
+    final text = utf8.decode(response.bodyBytes, allowMalformed: true);
+    return text.length > readmeLimit ? text.substring(0, readmeLimit) : text;
+  } catch (_) {
+    return null;
+  } finally {
+    if (owned) client.close();
+  }
+}
