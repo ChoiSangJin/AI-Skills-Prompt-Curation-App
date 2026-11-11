@@ -13,7 +13,7 @@ void main() {
       final query = request.url.queryParameters['q']!;
       expect(query, isNot(contains('OR')));
       expect(query, isNot(contains('(')));
-      expect(query, 'topic:${githubTopics[0][count++]} stars:>50');
+      expect(query, 'topic:${githubTopics[0][count++]} stars:>${minStars[0]}');
       return http.Response(
           jsonEncode({
             'items': [
@@ -44,5 +44,50 @@ void main() {
             client: MockClient((_) async => http.Response('{}', 403))),
         throwsA(isA<ApiFailure>()
             .having((e) => e.message, 'limit', contains('한도'))));
+  });
+  test('rising feed searches repos created in the last 30 days', () {
+    final uri = trendingUri(0, 1,
+        feed: Feed.rising, now: DateTime.utc(2026, 11, 11, 12));
+    expect(uri.queryParameters['q'],
+        'topic:claude-skills created:>2026-10-12 stars:>10');
+    expect(uri.queryParameters['sort'], 'stars');
+  });
+  test('each topic keeps a share of the page against larger topics',
+      () async {
+    final client = MockClient((request) async {
+      final topic = request.url.queryParameters['q']!.split(' ').first;
+      // The first topic has 20 huge repos; the others have small ones.
+      final huge = topic == 'topic:${githubTopics[0][0]}';
+      return http.Response(
+          jsonEncode({
+            'items': [
+              for (var i = 0; i < 20; i++)
+                {
+                  'full_name': '$topic/$i',
+                  'stargazers_count': huge ? 100000 - i : 100 - i
+                }
+            ]
+          }),
+          200);
+    });
+    final result = await fetchTrending(0, client: client);
+    expect(result.length, pageSize);
+    for (final topic in githubTopics[0]) {
+      final count = result
+          .where((r) => (r['full_name'] as String).startsWith('topic:$topic/'))
+          .length;
+      expect(count, greaterThanOrEqualTo(pageSize ~/ githubTopics[0].length));
+    }
+  });
+  test('README is truncated, and failures fall back to metadata only',
+      () async {
+    final long = MockClient((request) async {
+      expect(request.url.path, '/repos/a/repo/readme');
+      expect(request.headers['Accept'], 'application/vnd.github.raw+json');
+      return http.Response('x' * (readmeLimit + 100), 200);
+    });
+    expect((await fetchReadme('a/repo', client: long))!.length, readmeLimit);
+    final missing = MockClient((_) async => http.Response('{}', 404));
+    expect(await fetchReadme('a/repo', client: missing), isNull);
   });
 }

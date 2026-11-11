@@ -1,7 +1,7 @@
 name: ai_skills_curation
 description: Client-side AI skills and prompt curation.
 publish_to: none
-version: 1.1.5+7
+version: 1.2.2+9
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:

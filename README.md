@@ -1,6 +1,6 @@
 # AI 모아 — AI 도구와 프롬프트 큐레이션
 
-Flutter client for Android ARM64 and iOS. GitHub trends are cached in SQLite for 12 hours. Gemini summaries and task recipes use a user-supplied API key stored with flutter_secure_storage. Offline sample recipes require no key.
+Flutter client for Android ARM64 and iOS. GitHub trends are cached in SQLite for 12 hours. Gemini summaries and task recipes use a user-supplied API key stored with flutter_secure_storage. Built-in prompt examples (coding, image generation, writing, research), repository details, bookmarks and the popular/rising (last 30 days) feeds require no key.
 
 ## Development
 

@@ -93,8 +93,8 @@ class GeminiService {
     if (available.isEmpty)
       throw const ApiFailure(
           '이 키에서 사용할 수 있는 Gemini 텍스트 모델이 없습니다. 프로젝트의 API 접근을 확인해 주세요.');
-    if (_key != key || !available.contains(selectedModel))
-      selectedModel = available.first;
+    // Keep a restored or user-chosen model while it is still available.
+    if (!available.contains(selectedModel)) selectedModel = available.first;
     _key = key;
     models = available;
     return available;

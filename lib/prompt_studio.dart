@@ -1,21 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'prompt_library.dart';
 
 class PromptStudio extends StatefulWidget {
   final TextEditingController controller;
   final bool busy;
+  final String purpose;
+  final ValueChanged<String> onPurposeChanged;
   final Map<String, dynamic>? recipe;
   final String recipeTitle;
   final bool isSample;
   final bool recipeSaved;
   final List<Map<String, dynamic>> saved;
   final Future<void> Function(String) onGenerate;
-  final VoidCallback onSample;
+  final ValueChanged<LibraryPrompt> onSample;
   final Future<void> Function() onSave;
   const PromptStudio(
       {super.key,
       required this.controller,
       required this.busy,
+      required this.purpose,
+      required this.onPurposeChanged,
       required this.recipe,
       required this.recipeTitle,
       required this.isSample,
@@ -38,6 +43,8 @@ class _PromptStudioState extends State<PromptStudio> {
   bool generating = false;
   bool saving = false;
   bool get locked => widget.busy || generating || saving;
+  List<LibraryPrompt> get libraryExamples =>
+      promptLibrary.where((item) => item.purpose == widget.purpose).toList();
   static const examples = [
     (
       Icons.code_rounded,
@@ -190,10 +197,20 @@ class _PromptStudioState extends State<PromptStudio> {
                   children: [
                     heading(Icons.tune_rounded, '원하는 작업'),
                     const SizedBox(height: 6),
-                    const Text('예시를 골라 시작하거나 직접 적어보세요.',
+                    const Text('목적과 예시를 고르거나 직접 적어보세요.',
                         style:
                             TextStyle(fontSize: 13, height: 1.5, color: ink)),
                     const SizedBox(height: 14),
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      for (final item in purposes)
+                        ChoiceChip(
+                            label: Text(item),
+                            selected: widget.purpose == item,
+                            onSelected: locked
+                                ? null
+                                : (_) => widget.onPurposeChanged(item)),
+                    ]),
+                    const SizedBox(height: 12),
                     Wrap(spacing: 8, runSpacing: 8, children: [
                       for (final example in examples)
                         ActionChip(
@@ -295,7 +312,7 @@ class _PromptStudioState extends State<PromptStudio> {
                                 ? null
                                 : () {
                                     FocusScope.of(context).unfocus();
-                                    widget.onSample();
+                                    widget.onSample(libraryExamples.first);
                                   },
                             icon:
                                 const Icon(Icons.visibility_outlined, size: 18),
@@ -305,6 +322,52 @@ class _PromptStudioState extends State<PromptStudio> {
                             textAlign: TextAlign.center,
                             style: TextStyle(
                                 fontSize: 12, height: 1.5, color: ink))),
+                  ])),
+              const SizedBox(height: 18),
+              panel(Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    heading(Icons.lightbulb_outline_rounded,
+                        '${widget.purpose} 기본 예제',
+                        trailing: tag('키 없이 사용')),
+                    const SizedBox(height: 6),
+                    const Text('검증된 예제를 열어보고 바로 복사하거나 결과 화면에서 확인하세요.',
+                        style:
+                            TextStyle(fontSize: 13, height: 1.5, color: ink)),
+                    const SizedBox(height: 10),
+                    for (final item in libraryExamples)
+                      Container(
+                          margin: const EdgeInsets.only(top: 8),
+                          decoration: BoxDecoration(
+                              color: background,
+                              borderRadius: BorderRadius.circular(16)),
+                          child: ExpansionTile(
+                              shape: const Border(),
+                              collapsedShape: const Border(),
+                              title: Text(item.title,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600, color: ink)),
+                              childrenPadding:
+                                  const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                              children: [
+                                SelectableText(item.content,
+                                    style: const TextStyle(
+                                        height: 1.6, color: ink)),
+                                const SizedBox(height: 10),
+                                Wrap(spacing: 8, children: [
+                                  TextButton.icon(
+                                      onPressed: () => copy(item.content),
+                                      icon: const Icon(Icons.copy_rounded,
+                                          size: 17),
+                                      label: const Text('복사')),
+                                  TextButton.icon(
+                                      onPressed: () => widget.onSample(item),
+                                      icon: const Icon(
+                                          Icons.visibility_outlined,
+                                          size: 17),
+                                      label: const Text('결과로 보기')),
+                                ])
+                              ])),
                   ])),
               if (generating || widget.recipe != null) ...[
                 const SizedBox(height: 18),
