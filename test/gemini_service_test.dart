@@ -113,4 +113,18 @@ void main() {
         client: MockClient((_) async => http.Response('{"models":[]}', 200)));
     await expectLater(service.discover('key'), throwsA(isA<ApiFailure>()));
   });
+  test('a restored model survives discovery while still available', () async {
+    final service = GeminiService(
+        client: MockClient((_) async => http.Response(
+            jsonEncode({
+              'models': [model('gemini-a-flash'), model('gemini-b-pro')]
+            }),
+            200)))
+      ..selectedModel = 'gemini-b-pro';
+    await service.discover('key');
+    expect(service.selectedModel, 'gemini-b-pro');
+    service.selectedModel = 'gemini-removed';
+    await service.discover('key');
+    expect(service.selectedModel, 'gemini-a-flash');
+  });
 }

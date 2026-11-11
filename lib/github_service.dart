@@ -2,37 +2,63 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'gemini_service.dart';
 
+// Category names shown in the app, aligned with githubTopics/minStars.
+// Skills has its own category so it is not buried under larger MCP topics.
+const categoryNames = ['Skills', 'MCP / Agent', 'Coding Rules', 'Prompts'];
+
 // Search each topic separately: GitHub does not support the app's old
 // parenthesized boolean topic expression. Merge and deduplicate the results.
 const githubTopics = [
-  ['mcp-server', 'model-context-protocol', 'agent-skills'],
+  ['agent-skills', 'claude-skills', 'claude-code-skills'],
+  ['mcp-server', 'model-context-protocol'],
   ['cursor-rules', 'claude-code', 'coding-agent'],
   ['prompt-engineering', 'awesome-prompts', 'midjourney-prompts'],
 ];
-Uri trendingUri(int category, int topic) =>
-    Uri.https('api.github.com', '/search/repositories', {
-      'q': 'topic:${githubTopics[category][topic]} stars:>${[
-        50,
-        30,
-        100
-      ][category]}',
-      'sort': 'stars',
-      'order': 'desc',
-      'per_page': '20',
-    });
-Future<List<dynamic>> fetchTrending(int category, {http.Client? client}) async {
+const minStars = [30, 50, 30, 100];
+
+/// popular: all-time stars. rising: repos created in the last 30 days.
+enum Feed { popular, rising }
+
+const risingDays = 30;
+const risingMinStars = 10;
+const pageSize = 20;
+
+Uri trendingUri(int category, int topic,
+    {Feed feed = Feed.popular, DateTime? now}) {
+  final name = githubTopics[category][topic];
+  final since = (now ?? DateTime.now())
+      .toUtc()
+      .subtract(const Duration(days: risingDays))
+      .toIso8601String()
+      .substring(0, 10);
+  return Uri.https('api.github.com', '/search/repositories', {
+    'q': feed == Feed.popular
+        ? 'topic:$name stars:>${minStars[category]}'
+        : 'topic:$name created:>$since stars:>$risingMinStars',
+    'sort': 'stars',
+    'order': 'desc',
+    'per_page': '$pageSize',
+  });
+}
+
+int _byStars(dynamic a, dynamic b) =>
+    (b['stargazers_count'] as int).compareTo(a['stargazers_count'] as int);
+
+Future<List<dynamic>> fetchTrending(int category,
+    {Feed feed = Feed.popular, http.Client? client, DateTime? now}) async {
   final owned = client == null;
   client ??= http.Client();
   try {
-    final merged = <String, dynamic>{};
+    final perTopic = <List<dynamic>>[];
     Object? failure;
     for (var topic = 0; topic < githubTopics[category].length; topic++) {
       try {
-        final response =
-            await client.get(trendingUri(category, topic), headers: {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'AI-Moa',
-        }).timeout(const Duration(seconds: 20));
+        final response = await client.get(
+            trendingUri(category, topic, feed: feed, now: now),
+            headers: {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'AI-Moa',
+            }).timeout(const Duration(seconds: 20));
         if (response.statusCode == 403 || response.statusCode == 429) {
           throw ApiFailure(
               'GitHub 검색 사용 한도 또는 접근 제한입니다. 잠시 후 다시 시도해 주세요. 저장된 자료가 있으면 표시합니다.',
@@ -41,25 +67,58 @@ Future<List<dynamic>> fetchTrending(int category, {http.Client? client}) async {
         if (response.statusCode != 200)
           throw ApiFailure(
               'GitHub 검색에 실패했습니다 (${response.statusCode}). 잠시 후 다시 시도해 주세요.');
-        final items =
-            jsonDecode(utf8.decode(response.bodyBytes))['items'] as List;
-        for (final item in items) {
-          merged[item['full_name'] as String] = item;
-        }
+        perTopic.add(
+            (jsonDecode(utf8.decode(response.bodyBytes))['items'] as List)
+              ..sort(_byStars));
       } catch (error) {
         failure = error;
         if (error is ApiFailure && (error.status == 403 || error.status == 429))
           break;
       }
     }
-    if (merged.isEmpty) {
+    // Guarantee each topic a share of the page so small topics are not
+    // crowded out by huge ones, then fill the remaining slots by stars.
+    final picked = <String, dynamic>{};
+    final quota = pageSize ~/ githubTopics[category].length;
+    for (final items in perTopic) {
+      for (final item in items.take(quota)) {
+        picked.putIfAbsent(item['full_name'] as String, () => item);
+      }
+    }
+    for (final item in perTopic.expand((items) => items).toList()
+      ..sort(_byStars)) {
+      if (picked.length >= pageSize) break;
+      picked.putIfAbsent(item['full_name'] as String, () => item);
+    }
+    if (picked.isEmpty) {
       if (failure != null) throw failure;
       throw const ApiFailure('GitHub 검색 결과가 없습니다. 잠시 후 새로고침해 주세요.');
     }
-    final sorted = merged.values.toList()
-      ..sort((a, b) => (b['stargazers_count'] as int)
-          .compareTo(a['stargazers_count'] as int));
-    return sorted.take(20).toList();
+    return picked.values.toList()..sort(_byStars);
+  } finally {
+    if (owned) client.close();
+  }
+}
+
+const readmeLimit = 6000;
+
+/// README excerpt used to ground AI summaries. Returns null on any failure:
+/// the summary still works from metadata alone.
+Future<String?> fetchReadme(String fullName, {http.Client? client}) async {
+  final owned = client == null;
+  client ??= http.Client();
+  try {
+    final response = await client.get(
+        Uri.https('api.github.com', '/repos/$fullName/readme'),
+        headers: {
+          'Accept': 'application/vnd.github.raw+json',
+          'User-Agent': 'AI-Moa',
+        }).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) return null;
+    final text = utf8.decode(response.bodyBytes, allowMalformed: true);
+    return text.length > readmeLimit ? text.substring(0, readmeLimit) : text;
+  } catch (_) {
+    return null;
   } finally {
     if (owned) client.close();
   }
