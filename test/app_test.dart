@@ -62,6 +62,9 @@ void main() {
             summarize: (_) async =>
                 throw const ApiFailure('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'))));
     expect(find.text('★ 42'), findsOneWidget);
+    expect(compact(450532), '450.5k');
+    expect(compact(1000), '1k');
+    expect(compact(1250000), '1.3M');
     expect(find.text('토픽: agent-skills'), findsOneWidget);
     await tester.tap(find.text('AI 요약 보기 (Gemini 키 필요)'));
     await tester.pumpAndSettle();

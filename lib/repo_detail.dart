@@ -4,6 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'gemini_service.dart';
 
+/// Short star count such as 450.5k or 1.2M.
+String compact(int n) {
+  String one(double v) =>
+      v.toStringAsFixed(1).replaceFirst(RegExp(r'\.0$'), '');
+  if (n >= 1000000) return '${one(n / 1000000)}M';
+  if (n >= 1000) return '${one(n / 1000)}k';
+  return '$n';
+}
+
 /// Relative time label such as "3시간 전" for cache freshness.
 String ago(int millis, {DateTime? now}) {
   final diff = (now ?? DateTime.now())
@@ -85,7 +94,7 @@ class _RepoDetailState extends State<RepoDetail> {
           Text(repo['original_description'] as String? ?? ''),
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 4, children: [
-            Chip(label: Text('★ ${repo['star_count']}')),
+            Chip(label: Text('★ ${compact(repo['star_count'] as int)}')),
             Chip(label: Text(repo['topic_category'])),
             if (repo['language'] != null) Chip(label: Text(repo['language'])),
             if (pushed != null)

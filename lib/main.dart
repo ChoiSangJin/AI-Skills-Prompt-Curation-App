@@ -89,6 +89,17 @@ ThemeData appTheme() {
         style: OutlinedButton.styleFrom(foregroundColor: ink)),
     inputDecorationTheme: const InputDecorationTheme(
         filled: true, fillColor: blush, border: OutlineInputBorder()),
+    cardTheme: CardThemeData(
+        color: Colors.white,
+        elevation: 0,
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFE7E5EF)))),
+    chipTheme: const ChipThemeData(
+        showCheckmark: false,
+        selectedColor: pink,
+        side: BorderSide(color: Color(0xFFDAD8E4))),
   );
 }
 
@@ -353,7 +364,26 @@ class _HomeState extends State<Home> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(title: const Text('AI 모아')),
+      appBar: AppBar(
+          title: const Text('AI 모아',
+              style: TextStyle(fontWeight: FontWeight.w700)),
+          actions: page == 0
+              ? [
+                  PopupMenuButton<bool>(
+                      tooltip: '정렬',
+                      icon: const Icon(Icons.sort),
+                      initialValue: sortByUpdated,
+                      onSelected: (v) => setState(() => sortByUpdated = v),
+                      itemBuilder: (_) => const [
+                            PopupMenuItem(value: false, child: Text('스타순')),
+                            PopupMenuItem(value: true, child: Text('최근 업데이트순')),
+                          ]),
+                  IconButton(
+                      tooltip: '새로고침',
+                      icon: const Icon(Icons.refresh),
+                      onPressed: busy ? null : () => load(force: true)),
+                ]
+              : null),
       bottomNavigationBar: NavigationBar(
           selectedIndex: page,
           onDestinationSelected: (v) => setState(() => page = v),
@@ -376,116 +406,195 @@ class _HomeState extends State<Home> {
                         ? library()
                         : settings())
       ]));
-  Widget trending() => Column(children: [
-        Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: SegmentedButton<Feed>(
-                segments: const [
-                  ButtonSegment(value: Feed.popular, label: Text('인기 (누적)')),
-                  ButtonSegment(
-                      value: Feed.rising, label: Text('급상승 (최근 30일)')),
-                ],
-                selected: {feed},
-                onSelectionChanged: busy
-                    ? null
-                    : (value) {
-                        setState(() => feed = value.first);
-                        load();
-                      })),
-        Wrap(
-            children: List.generate(
-                categories.length,
-                (i) => Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: ChoiceChip(
-                        label: Text(categories[i]),
-                        selected: category == i,
-                        onSelected: (_) => setState(() => category = i))))),
-        Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(children: [
-              Expanded(
-                  child: TextField(
-                      decoration: const InputDecoration(
-                          isDense: true,
-                          prefixIcon: Icon(Icons.search),
-                          hintText: '이름·설명 검색'),
-                      onChanged: (v) => setState(() => search = v))),
-              const SizedBox(width: 8),
-              DropdownButton<bool>(
-                  value: sortByUpdated,
-                  items: const [
-                    DropdownMenuItem(value: false, child: Text('스타순')),
-                    DropdownMenuItem(value: true, child: Text('최근 업데이트순')),
+  // Controls scroll away with the list so cards get most of the screen.
+  Widget trending() {
+    final list = visibleRepos();
+    final caption = Theme.of(context).textTheme.bodySmall;
+    return RefreshIndicator(
+        onRefresh: () => load(force: true),
+        child: ListView(padding: const EdgeInsets.only(bottom: 16), children: [
+          Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+              child: TextField(
+                  decoration: InputDecoration(
+                      isDense: true,
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: '이름·설명 검색',
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                          borderSide: BorderSide.none)),
+                  onChanged: (v) => setState(() => search = v))),
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: SegmentedButton<Feed>(
+                  showSelectedIcon: false,
+                  style: const ButtonStyle(
+                      visualDensity: VisualDensity.compact),
+                  segments: const [
+                    ButtonSegment(
+                        value: Feed.popular,
+                        icon: Icon(Icons.star_outline),
+                        label: Text('인기')),
+                    ButtonSegment(
+                        value: Feed.rising,
+                        icon: Icon(Icons.trending_up),
+                        label: Text('급상승 30일')),
                   ],
-                  onChanged: (v) => setState(() => sortByUpdated = v!)),
-            ])),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          TextButton(
-              onPressed: busy ? null : () => load(force: true),
-              child: const Text('새로고침')),
-          // Oldest fetch time among loaded rows tells how fresh the list is.
-          if (repos.isNotEmpty)
-            Text(
-                '마지막 업데이트: ${ago(repos.map((r) => r['updated_at'] as int).reduce((a, b) => a < b ? a : b))}'),
-        ]),
-        Expanded(
-            child: ListView(children: [
+                  selected: {feed},
+                  onSelectionChanged: busy
+                      ? null
+                      : (value) {
+                          setState(() => feed = value.first);
+                          load();
+                        })),
+          // One horizontally scrolling row instead of wrapped chips.
+          SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: Row(children: [
+                for (var i = 0; i < categories.length; i++)
+                  Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                          visualDensity: VisualDensity.compact,
+                          label: Text(categories[i]),
+                          selected: category == i,
+                          onSelected: (_) => setState(() => category = i)))
+              ])),
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text(
+                  repos.isEmpty
+                      ? '아래로 당기거나 새로고침 버튼으로 불러오세요'
+                      // Oldest fetch time among rows tells how fresh it is.
+                      : '${list.length}개 · ${sortByUpdated ? '최근 업데이트순' : '스타순'} · 업데이트 ${ago(repos.map((r) => r['updated_at'] as int).reduce((a, b) => a < b ? a : b))}',
+                  style: caption)),
           if (repos.isEmpty)
             const ListTile(
                 title: Text('저장된 저장소가 없습니다'),
-                subtitle:
-                    Text('새로고침으로 GitHub 자료를 가져오세요. Gemini 키는 필요하지 않습니다.')),
+                subtitle: Text('GitHub 자료는 Gemini 키 없이 볼 수 있어요.')),
           if (category == 0 && search.isEmpty) overview(),
-          for (final repo in visibleRepos()) repoCard(repo)
-        ]))
-      ]);
+          for (final repo in list) repoCard(repo)
+        ]));
+  }
 
   // At-a-glance summary so users need not scan the whole list each visit.
   Widget overview() {
-    final fresh = visibleRepos().where(isNew).toList();
-    if (fresh.isEmpty && risingTop.isEmpty) return const SizedBox.shrink();
+    final fresh = visibleRepos().where(isNew).length;
+    if (fresh == 0 && risingTop.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
     return Card(
+        color: theme.colorScheme.primaryContainer,
         child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('한눈에 보기',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              if (fresh.isNotEmpty)
-                Text('지난 방문 이후 새로 등장: ${fresh.length}개 (NEW 표시)'),
-              if (risingTop.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text('최근 30일 급상승 Top ${risingTop.length}'),
+              Row(children: [
+                const Icon(Icons.local_fire_department, size: 18),
+                const SizedBox(width: 6),
+                Text('한눈에 보기',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+                const Spacer(),
+                if (fresh > 0) badge('NEW $fresh'),
+              ]),
+              const SizedBox(height: 6),
+              if (risingTop.isNotEmpty)
                 for (final (i, r) in risingTop.indexed)
-                  Text('${i + 1}. ${r['repo_name']} ★ ${r['star_count']}'),
-              ] else
-                const Text('급상승 탭을 열면 최근 30일 Top 5도 표시돼요.'),
+                  Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(children: [
+                        SizedBox(
+                            width: 20,
+                            child: Text('${i + 1}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w700))),
+                        Expanded(
+                            child: Text(r['repo_name'] as String,
+                                maxLines: 1, overflow: TextOverflow.ellipsis)),
+                        Text('★ ${compact(r['star_count'] as int)}',
+                            style: theme.textTheme.bodySmall),
+                      ]))
+              else
+                Text('급상승 탭을 열면 최근 30일 Top 5가 표시돼요.',
+                    style: theme.textTheme.bodySmall),
             ])));
   }
 
-  Widget repoCard(Map<String, dynamic> repo) => Card(
-      child: ListTile(
-          title: Row(children: [
-            Flexible(child: Text(repo['repo_name'])),
-            if (isNew(repo))
-              Container(
-                  margin: const EdgeInsets.only(left: 6),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(8)),
-                  child: const Text('NEW', style: TextStyle(fontSize: 11))),
-          ]),
-          subtitle: Text(
-              '★ ${repo['star_count']} · ${repo['topic_category']}\n${repo['original_description']}'),
-          onTap: () => openDetail(repo),
-          trailing: IconButton(
-              tooltip: '북마크',
-              icon: Icon(
-                  isBookmarked(repo) ? Icons.bookmark : Icons.bookmark_border),
-              onPressed: () => toggleBookmark(repo))));
+  Widget badge(String text) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary,
+          borderRadius: BorderRadius.circular(10)),
+      child: Text(text,
+          style: const TextStyle(
+              fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white)));
+
+  // Owner/name hierarchy, two-line description and one compact meta row.
+  Widget repoCard(Map<String, dynamic> repo) {
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.bodySmall
+        ?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.6));
+    final name = repo['repo_name'] as String;
+    final slash = name.indexOf('/');
+    final pushed = DateTime.tryParse(repo['pushed_at'] as String? ?? '');
+    final description = repo['original_description'] as String? ?? '';
+    return Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+            onTap: () => openDetail(repo),
+            child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 4, 12),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              Text(name.substring(0, slash + 1), style: muted),
+                              Row(children: [
+                                Flexible(
+                                    child: Text(name.substring(slash + 1),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.titleMedium
+                                            ?.copyWith(
+                                                fontWeight: FontWeight.w700))),
+                                if (isNew(repo)) ...[
+                                  const SizedBox(width: 6),
+                                  badge('NEW'),
+                                ],
+                              ]),
+                            ])),
+                        IconButton(
+                            tooltip: '북마크',
+                            icon: Icon(isBookmarked(repo)
+                                ? Icons.bookmark
+                                : Icons.bookmark_border),
+                            onPressed: () => toggleBookmark(repo)),
+                      ]),
+                      if (description.isNotEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 4, right: 12),
+                            child: Text(description,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium)),
+                      const SizedBox(height: 8),
+                      Text(
+                          [
+                            '★ ${compact(repo['star_count'] as int)}',
+                            if (repo['language'] != null) repo['language'],
+                            repo['topic_category'],
+                            if (pushed != null)
+                              ago(pushed.millisecondsSinceEpoch),
+                          ].join('  ·  '),
+                          style: muted),
+                    ]))));
+  }
   // In "All" a repo matching several categories is shown only once.
   List<Map<String, dynamic>> visibleRepos() {
     final seen = <String>{};
@@ -581,13 +690,22 @@ class _HomeState extends State<Home> {
           ]),
       ]);
 
-  Widget library() => ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('북마크한 저장소', style: TextStyle(fontWeight: FontWeight.bold)),
+  // Cards carry their own side margin, so only text rows get padding here.
+  Widget library() => ListView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text('북마크한 저장소',
+                    style: TextStyle(fontWeight: FontWeight.bold))),
         if (bookmarks.isEmpty)
           const ListTile(title: Text('트렌딩 카드의 북마크 버튼으로 저장하세요.')),
         for (final repo in bookmarks) repoCard(repo),
-        const Divider(height: 32),
-        const Text('저장한 프롬프트', style: TextStyle(fontWeight: FontWeight.bold)),
+        const Divider(height: 32, indent: 16, endIndent: 16),
+        const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text('저장한 프롬프트',
+                style: TextStyle(fontWeight: FontWeight.bold))),
         if (saved.isEmpty)
           const ListTile(title: Text('생성 탭에서 만든 프롬프트를 저장하세요.')),
         for (final item in saved)
