@@ -21,4 +21,12 @@ void main() {
     expect(find.text('키 확인 후 저장'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  test('cache freshness label uses relative Korean time', () {
+    final now = DateTime(2026, 1, 1, 12);
+    int before(Duration d) => now.subtract(d).millisecondsSinceEpoch;
+    expect(ago(before(const Duration(seconds: 10)), now: now), '방금 전');
+    expect(ago(before(const Duration(minutes: 5)), now: now), '5분 전');
+    expect(ago(before(const Duration(hours: 3)), now: now), '3시간 전');
+    expect(ago(before(const Duration(days: 2)), now: now), '2일 전');
+  });
 }

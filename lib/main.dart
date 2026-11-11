@@ -27,6 +27,16 @@ class Store {
       });
 }
 
+/// Relative time label such as "3시간 전" for cache freshness.
+String ago(int millis, {DateTime? now}) {
+  final diff = (now ?? DateTime.now())
+      .difference(DateTime.fromMillisecondsSinceEpoch(millis));
+  if (diff.inMinutes < 1) return '방금 전';
+  if (diff.inHours < 1) return '${diff.inMinutes}분 전';
+  if (diff.inDays < 1) return '${diff.inHours}시간 전';
+  return '${diff.inDays}일 전';
+}
+
 ThemeData appTheme() {
   const ink = Color(0xFF302D3D);
   const pink = Color(0xFFFFC7C7);
@@ -124,12 +134,14 @@ class _HomeState extends State<Home> {
     }
   }
 
-  Future<void> load() => run(() async {
+  // force: the manual refresh button skips the 12-hour cache check.
+  Future<void> load({bool force = false}) => run(() async {
         final db = await Store.open();
         for (int i = 0; i < 3; i++) {
           final cached = await db.query('cached_repos',
               where: 'topic_category = ?', whereArgs: [categories[i + 1]]);
-          if (cached.isNotEmpty &&
+          if (!force &&
+              cached.isNotEmpty &&
               cached.every((r) =>
                   DateTime.now().millisecondsSinceEpoch -
                       (r['updated_at'] as int) <
@@ -137,6 +149,13 @@ class _HomeState extends State<Home> {
           try {
             final items = await fetchTrending(i);
             await db.transaction((txn) async {
+              // Drop repos that fell out of this category's ranking so stale
+              // rows no longer defeat the freshness check above.
+              final names = items.map((item) => item['full_name']).toList();
+              await txn.delete('cached_repos',
+                  where:
+                      'topic_category = ? AND repo_name NOT IN (${List.filled(names.length, '?').join(',')})',
+                  whereArgs: [categories[i + 1], ...names]);
               for (final item in items) {
                 final old = await txn.query('cached_repos',
                     where: 'repo_name = ?', whereArgs: [item['full_name']]);
@@ -247,7 +266,15 @@ class _HomeState extends State<Home> {
                         label: Text(categories[i]),
                         selected: category == i,
                         onSelected: (_) => setState(() => category = i))))),
-        TextButton(onPressed: busy ? null : load, child: const Text('새로고침')),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          TextButton(
+              onPressed: busy ? null : () => load(force: true),
+              child: const Text('새로고침')),
+          // Oldest fetch time among loaded rows tells how fresh the list is.
+          if (repos.isNotEmpty)
+            Text(
+                '마지막 업데이트: ${ago(repos.map((r) => r['updated_at'] as int).reduce((a, b) => a < b ? a : b))}'),
+        ]),
         Expanded(
             child: ListView(children: [
           if (repos.isEmpty)
