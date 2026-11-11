@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'gemini_service.dart';
 import 'summary_loading.dart';
 import 'github_service.dart';
+import 'prompt_library.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -109,6 +110,7 @@ class _HomeState extends State<Home> {
   int page = 0;
   int category = 0;
   Feed feed = Feed.popular;
+  String purpose = purposes.first;
   bool busy = false;
   String message = '';
   List<Map<String, dynamic>> repos = [];
@@ -259,10 +261,7 @@ class _HomeState extends State<Home> {
                             '${result['use_case_summary']}\n\n${result['target_audience']}\n\n${result['execution_snippet']}')),
                     actions: [
                       TextButton(
-                          onPressed: () {
-                            Clipboard.setData(ClipboardData(
-                                text: result['execution_snippet']));
-                          },
+                          onPressed: () => copy(result['execution_snippet']),
                           child: const Text('복사')),
                       TextButton(
                           onPressed: () => Navigator.pop(context),
@@ -355,7 +354,23 @@ class _HomeState extends State<Home> {
         .toList();
   }
 
+  // Copy with visible feedback so users know the tap worked.
+  void copy(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('복사했어요'), duration: Duration(seconds: 1)));
+  }
+
   Widget generator() => ListView(padding: const EdgeInsets.all(16), children: [
+        // The purpose drives both the Gemini output format and the examples.
+        Wrap(spacing: 8, children: [
+          for (final item in purposes)
+            ChoiceChip(
+                label: Text(item),
+                selected: purpose == item,
+                onSelected: (_) => setState(() => purpose = item))
+        ]),
+        const SizedBox(height: 8),
         TextField(
             controller: task,
             maxLines: 3,
@@ -366,28 +381,23 @@ class _HomeState extends State<Home> {
                 : () => run(() async {
                       final key = await Store.secure.read(key: 'gemini');
                       if (key == null) {
-                        setState(() => message = '설정에서 Gemini 키를 등록하세요.');
+                        setState(() => message =
+                            '설정에서 Gemini 키를 등록하세요. 아래 기본 예제는 키 없이 쓸 수 있어요.');
                         return;
                       }
-                      final result = await gemini.generate(key, task.text);
+                      if (task.text.trim().isEmpty) {
+                        throw const ApiFailure('먼저 작업 내용을 입력해 주세요.');
+                      }
+                      final result = await gemini.generate(
+                          key, '${purposeGuides[purpose]}\nTask: ${task.text}');
                       if (mounted) setState(() => recipe = result);
                     }),
             child: const Text('추천 및 프롬프트 생성')),
-        OutlinedButton(
-            onPressed: () => setState(() => recipe = {
-                  'use_case_summary':
-                      'Flutter 화면을 작은 위젯으로 분리하고 접근성과 오류 상태를 점검하세요. 주의: API 키를 소스 코드에 넣지 마세요.',
-                  'target_audience': 'Flutter 개발자',
-                  'execution_snippet':
-                      'Flutter 화면을 설계해 주세요. 로딩·빈 목록·오류 상태와 접근성 레이블을 포함하고 작은 위젯으로 분리하세요.'
-                }),
-            child: const Text('오프라인 샘플 보기')),
         if (recipe != null) ...[
           SelectableText(
               '${recipe!['use_case_summary']}\n\n${recipe!['target_audience']}\n\n${recipe!['execution_snippet']}'),
           TextButton(
-              onPressed: () => Clipboard.setData(
-                  ClipboardData(text: recipe!['execution_snippet'])),
+              onPressed: () => copy(recipe!['execution_snippet']),
               child: const Text('프롬프트 복사')),
           TextButton(
               onPressed: () => run(() async {
@@ -395,9 +405,9 @@ class _HomeState extends State<Home> {
                     final now = DateTime.now().millisecondsSinceEpoch;
                     await db.insert('saved_prompts', {
                       'id': '$now',
-                      'title': task.text.isEmpty ? '샘플' : task.text,
+                      'title': task.text.isEmpty ? purpose : task.text,
                       'content': recipe!['execution_snippet'],
-                      'category': 'custom',
+                      'category': purpose,
                       'created_at': now
                     });
                     final rows = await db.query('saved_prompts',
@@ -407,13 +417,20 @@ class _HomeState extends State<Home> {
               child: const Text('저장'))
         ],
         const Divider(),
+        Text('$purpose 기본 예제 (키 없이 사용)'),
+        for (final item in promptLibrary.where((p) => p.purpose == purpose))
+          ExpansionTile(title: Text(item.title), children: [
+            SelectableText(item.content),
+            TextButton(
+                onPressed: () => copy(item.content), child: const Text('복사'))
+          ]),
+        const Divider(),
         const Text('저장한 프롬프트'),
         for (final item in saved)
           ListTile(
               title: Text(item['title']),
               subtitle: Text(item['content']),
-              onTap: () =>
-                  Clipboard.setData(ClipboardData(text: item['content'])))
+              onTap: () => copy(item['content']))
       ]);
   Widget settings() => ListView(padding: const EdgeInsets.all(16), children: [
         const Text(
