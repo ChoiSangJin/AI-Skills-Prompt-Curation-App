@@ -121,6 +121,9 @@ class _HomeState extends State<Home> {
   bool visitLoaded = false;
   String search = '';
   bool sortByUpdated = false;
+  bool hasKey = false;
+  // Cached rising repos for the overview card, whatever feed is selected.
+  List<Map<String, dynamic>> risingTop = [];
   Map<String, dynamic>? recipe;
   final gemini = GeminiService();
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
@@ -130,7 +133,25 @@ class _HomeState extends State<Home> {
   @override
   void initState() {
     super.initState();
+    restoreKey();
     load();
+  }
+
+  // Show the stored key and model after a restart instead of "no key".
+  Future<void> restoreKey() async {
+    try {
+      final key = await Store.secure.read(key: 'gemini');
+      final model = await Store.secure.read(key: 'gemini_model');
+      if (key == null || !mounted) return;
+      setState(() {
+        hasKey = true;
+        gemini.selectedModel = model;
+        keyStatus = '등록된 키가 있습니다.${model == null ? '' : ' 사용 모델: $model'}';
+      });
+    } catch (_) {
+      // Best effort: secure storage can be unavailable (e.g. widget tests);
+      // generation still reads the key and reports its own errors.
+    }
   }
 
   @override
@@ -235,6 +256,8 @@ class _HomeState extends State<Home> {
     final marked = await db.rawQuery(
         'SELECT b.data, s.use_case_summary, s.target_audience, s.execution_snippet FROM bookmarks b LEFT JOIN summaries s ON s.repo_name = b.repo_name ORDER BY b.created_at DESC');
     final seen = await db.query('seen_repos');
+    final rising = await db.rawQuery(
+        "SELECT repo_name, MAX(star_count) AS star_count FROM cached_repos WHERE feed = 'rising' GROUP BY repo_name ORDER BY star_count DESC LIMIT 5");
     if (mounted)
       setState(() {
         repos = rows;
@@ -250,6 +273,7 @@ class _HomeState extends State<Home> {
           for (final row in seen)
             row['repo_name'] as String: row['first_seen_at'] as int
         };
+        risingTop = rising;
       });
   }
 
@@ -412,9 +436,33 @@ class _HomeState extends State<Home> {
                 title: Text('저장된 저장소가 없습니다'),
                 subtitle:
                     Text('새로고침으로 GitHub 자료를 가져오세요. Gemini 키는 필요하지 않습니다.')),
+          if (category == 0 && search.isEmpty) overview(),
           for (final repo in visibleRepos()) repoCard(repo)
         ]))
       ]);
+
+  // At-a-glance summary so users need not scan the whole list each visit.
+  Widget overview() {
+    final fresh = visibleRepos().where(isNew).toList();
+    if (fresh.isEmpty && risingTop.isEmpty) return const SizedBox.shrink();
+    return Card(
+        child: Padding(
+            padding: const EdgeInsets.all(12),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('한눈에 보기',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              if (fresh.isNotEmpty)
+                Text('지난 방문 이후 새로 등장: ${fresh.length}개 (NEW 표시)'),
+              if (risingTop.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('최근 30일 급상승 Top ${risingTop.length}'),
+                for (final (i, r) in risingTop.indexed)
+                  Text('${i + 1}. ${r['repo_name']} ★ ${r['star_count']}'),
+              ] else
+                const Text('급상승 탭을 열면 최근 30일 Top 5도 표시돼요.'),
+            ])));
+  }
 
   Widget repoCard(Map<String, dynamic> repo) => Card(
       child: ListTile(
@@ -574,9 +622,12 @@ class _HomeState extends State<Home> {
                       final key = keyInput.text.trim();
                       await gemini.discover(key);
                       await Store.secure.write(key: 'gemini', value: key);
+                      await Store.secure.write(
+                          key: 'gemini_model', value: gemini.selectedModel);
                       keyInput.clear();
                       if (mounted)
                         setState(() {
+                          hasKey = true;
                           message = '키 확인 · 저장 완료';
                           keyStatus = '모델 목록 확인 완료. 생성 권한과 할당량은 실제 생성 시 확인합니다.';
                         });
@@ -585,10 +636,12 @@ class _HomeState extends State<Home> {
         TextButton(
             onPressed: () => run(() async {
                   await Store.secure.delete(key: 'gemini');
+                  await Store.secure.delete(key: 'gemini_model');
                   gemini.clear();
                   keyInput.clear();
                   if (mounted)
                     setState(() {
+                      hasKey = false;
                       message = '키 삭제됨';
                       keyStatus = '등록된 키가 없습니다.';
                     });
@@ -600,6 +653,19 @@ class _HomeState extends State<Home> {
                 mode: LaunchMode.externalApplication),
             child: const Text('Google AI Studio에서 키 발급')),
         Text(keyStatus),
+        // After a restart the model list is empty; reload it without
+        // re-entering the key (listing models spends no generation quota).
+        if (hasKey && gemini.models.isEmpty)
+          TextButton(
+              onPressed: busy
+                  ? null
+                  : () => run(() async {
+                        final key = await Store.secure.read(key: 'gemini');
+                        if (key == null) return;
+                        await gemini.discover(key);
+                        if (mounted) setState(() {});
+                      }),
+              child: const Text('모델 목록 불러오기')),
         if (gemini.models.isNotEmpty)
           DropdownButton<String>(
               isExpanded: true,
@@ -611,8 +677,11 @@ class _HomeState extends State<Home> {
                   .toList(),
               onChanged: busy
                   ? null
-                  : (m) => setState(() => gemini.selectedModel = m)),
+                  : (m) {
+                      setState(() => gemini.selectedModel = m);
+                      Store.secure.write(key: 'gemini_model', value: m);
+                    }),
         const Text(
-            'API 키 없이 생성 탭의 오프라인 샘플을 사용할 수 있습니다. Gemini 호출은 사용 요금이 발생할 수 있습니다.')
+            'API 키 없이 생성 탭의 기본 예제를 사용할 수 있습니다. Gemini 호출은 사용 요금이 발생할 수 있습니다.')
       ]);
 }

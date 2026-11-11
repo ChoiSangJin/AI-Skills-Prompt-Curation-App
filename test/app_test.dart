@@ -25,6 +25,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('복사했어요'), findsOneWidget);
     await tester.pumpAndSettle();
+    await tester.tap(find.text('보관함'));
+    await tester.pumpAndSettle();
+    expect(find.text('트렌딩 카드의 북마크 버튼으로 저장하세요.'), findsOneWidget);
     await tester.tap(find.text('설정'));
     await tester.pumpAndSettle();
     final input = tester.widget<TextField>(find.byType(TextField));
