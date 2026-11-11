@@ -17,13 +17,31 @@ void main() {
 class Store {
   static const secure = FlutterSecureStorage(
       aOptions: AndroidOptions(encryptedSharedPreferences: true));
+
+  // v2 keeps one cache row per feed/category and moves AI summaries into
+  // their own table so refreshing the cache never discards paid summaries.
+  static Future<void> _createV2(DatabaseExecutor db) async {
+    await db.execute(
+        'CREATE TABLE cached_repos(repo_name TEXT NOT NULL, feed TEXT NOT NULL, topic_category TEXT NOT NULL, repo_url TEXT NOT NULL, star_count INTEGER NOT NULL, original_description TEXT, language TEXT, topics TEXT, pushed_at TEXT, updated_at INTEGER NOT NULL, PRIMARY KEY(repo_name, feed, topic_category))');
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS summaries(repo_name TEXT PRIMARY KEY, use_case_summary TEXT NOT NULL, target_audience TEXT NOT NULL, execution_snippet TEXT NOT NULL)');
+  }
+
   static Future<Database> open() async =>
-      openDatabase(p.join(await getDatabasesPath(), 'curation.db'), version: 1,
+      openDatabase(p.join(await getDatabasesPath(), 'curation.db'), version: 2,
           onCreate: (db, _) async {
-        await db.execute(
-            'CREATE TABLE cached_repos(repo_name TEXT PRIMARY KEY, repo_url TEXT NOT NULL, star_count INTEGER NOT NULL, original_description TEXT, topic_category TEXT NOT NULL, use_case_summary TEXT, target_audience TEXT, execution_snippet TEXT, updated_at INTEGER NOT NULL)');
+        await _createV2(db);
         await db.execute(
             'CREATE TABLE saved_prompts(id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL, category TEXT NOT NULL, created_at INTEGER NOT NULL)');
+      }, onUpgrade: (db, oldVersion, _) async {
+        if (oldVersion < 2) {
+          await db.execute(
+              'CREATE TABLE summaries(repo_name TEXT PRIMARY KEY, use_case_summary TEXT NOT NULL, target_audience TEXT NOT NULL, execution_snippet TEXT NOT NULL)');
+          await db.execute(
+              'INSERT INTO summaries SELECT repo_name, use_case_summary, target_audience, execution_snippet FROM cached_repos WHERE use_case_summary IS NOT NULL');
+          await db.execute('DROP TABLE cached_repos');
+          await _createV2(db);
+        }
       });
 }
 
@@ -90,6 +108,7 @@ class Home extends StatefulWidget {
 class _HomeState extends State<Home> {
   int page = 0;
   int category = 0;
+  Feed feed = Feed.popular;
   bool busy = false;
   String message = '';
   List<Map<String, dynamic>> repos = [];
@@ -99,7 +118,7 @@ class _HomeState extends State<Home> {
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
   final keyInput = TextEditingController();
   final task = TextEditingController();
-  final categories = ['All', 'MCP / Agent', 'Coding Rules', 'Prompts'];
+  final categories = ['All', ...categoryNames];
   @override
   void initState() {
     super.initState();
@@ -135,11 +154,14 @@ class _HomeState extends State<Home> {
   }
 
   // force: the manual refresh button skips the 12-hour cache check.
+  // Only the selected feed is fetched to stay within GitHub's search limit.
   Future<void> load({bool force = false}) => run(() async {
         final db = await Store.open();
-        for (int i = 0; i < 3; i++) {
-          final cached = await db.query('cached_repos',
-              where: 'topic_category = ?', whereArgs: [categories[i + 1]]);
+        for (int i = 0; i < categoryNames.length; i++) {
+          const where = 'feed = ? AND topic_category = ?';
+          final args = [feed.name, categoryNames[i]];
+          final cached =
+              await db.query('cached_repos', where: where, whereArgs: args);
           if (!force &&
               cached.isNotEmpty &&
               cached.every((r) =>
@@ -147,30 +169,25 @@ class _HomeState extends State<Home> {
                       (r['updated_at'] as int) <
                   43200000)) continue;
           try {
-            final items = await fetchTrending(i);
+            final items = await fetchTrending(i, feed: feed);
+            final now = DateTime.now().millisecondsSinceEpoch;
             await db.transaction((txn) async {
-              // Drop repos that fell out of this category's ranking so stale
-              // rows no longer defeat the freshness check above.
-              final names = items.map((item) => item['full_name']).toList();
-              await txn.delete('cached_repos',
-                  where:
-                      'topic_category = ? AND repo_name NOT IN (${List.filled(names.length, '?').join(',')})',
-                  whereArgs: [categories[i + 1], ...names]);
+              // Replace the whole category so repos that fell out of the
+              // ranking do not linger and defeat the freshness check.
+              await txn.delete('cached_repos', where: where, whereArgs: args);
               for (final item in items) {
-                final old = await txn.query('cached_repos',
-                    where: 'repo_name = ?', whereArgs: [item['full_name']]);
-                await txn.insert(
-                    'cached_repos',
-                    {
-                      ...(old.isEmpty ? <String, Object?>{} : old.first),
-                      'repo_name': item['full_name'],
-                      'repo_url': item['html_url'],
-                      'star_count': item['stargazers_count'],
-                      'original_description': item['description'] ?? '',
-                      'topic_category': categories[i + 1],
-                      'updated_at': DateTime.now().millisecondsSinceEpoch
-                    },
-                    conflictAlgorithm: ConflictAlgorithm.replace);
+                await txn.insert('cached_repos', {
+                  'repo_name': item['full_name'],
+                  'feed': feed.name,
+                  'topic_category': categoryNames[i],
+                  'repo_url': item['html_url'],
+                  'star_count': item['stargazers_count'],
+                  'original_description': item['description'] ?? '',
+                  'language': item['language'],
+                  'topics': jsonEncode(item['topics'] ?? []),
+                  'pushed_at': item['pushed_at'],
+                  'updated_at': now
+                });
               }
             });
           } catch (error) {
@@ -178,9 +195,14 @@ class _HomeState extends State<Home> {
               setState(() {
                 message = friendlyError(error);
               });
+            // Further categories would hit the same GitHub limit.
+            if (error is ApiFailure &&
+                (error.status == 403 || error.status == 429)) break;
           }
         }
-        final rows = await db.query('cached_repos', orderBy: 'star_count DESC');
+        final rows = await db.rawQuery(
+            'SELECT c.*, s.use_case_summary, s.target_audience, s.execution_snippet FROM cached_repos c LEFT JOIN summaries s ON s.repo_name = c.repo_name WHERE c.feed = ? ORDER BY c.star_count DESC',
+            [feed.name]);
         final prompts =
             await db.query('saved_prompts', orderBy: 'created_at DESC');
         if (mounted)
@@ -206,12 +228,25 @@ class _HomeState extends State<Home> {
             final output = await gemini.generate(key,
                 'Analyze repository metadata (do not invent installation commands): ${jsonEncode(repo)}');
             final db = await Store.open();
-            await db.update('cached_repos', output,
-                where: 'repo_name = ?', whereArgs: [repo['repo_name']]);
+            await db.insert(
+                'summaries', {'repo_name': repo['repo_name'], ...output},
+                conflictAlgorithm: ConflictAlgorithm.replace);
             return {...repo, ...output};
           });
+          // Copy only the summary fields: the same repo can appear in
+          // several categories and must keep its own category row.
           repos = repos
-              .map((r) => r['repo_name'] == repo['repo_name'] ? result : r)
+              .map((r) => r['repo_name'] == repo['repo_name']
+                  ? {
+                      ...r,
+                      for (final field in [
+                        'use_case_summary',
+                        'target_audience',
+                        'execution_snippet'
+                      ])
+                        field: result[field]
+                    }
+                  : r)
               .toList();
         }
         if (!mounted) return;
@@ -257,9 +292,24 @@ class _HomeState extends State<Home> {
                     : settings())
       ]));
   Widget trending() => Column(children: [
+        Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SegmentedButton<Feed>(
+                segments: const [
+                  ButtonSegment(value: Feed.popular, label: Text('인기 (누적)')),
+                  ButtonSegment(
+                      value: Feed.rising, label: Text('급상승 (최근 30일)')),
+                ],
+                selected: {feed},
+                onSelectionChanged: busy
+                    ? null
+                    : (value) {
+                        setState(() => feed = value.first);
+                        load();
+                      })),
         Wrap(
             children: List.generate(
-                4,
+                categories.length,
                 (i) => Padding(
                     padding: const EdgeInsets.all(4),
                     child: ChoiceChip(
@@ -282,8 +332,7 @@ class _HomeState extends State<Home> {
                 title: Text('저장된 저장소가 없습니다'),
                 subtitle:
                     Text('새로고침으로 GitHub 자료를 가져오세요. Gemini 키는 필요하지 않습니다.')),
-          for (final repo in repos.where((r) =>
-              category == 0 || r['topic_category'] == categories[category]))
+          for (final repo in visibleRepos())
             Card(
                 child: ListTile(
                     title: Text(repo['repo_name']),
@@ -296,6 +345,16 @@ class _HomeState extends State<Home> {
                             mode: LaunchMode.externalApplication))))
         ]))
       ]);
+  // In "All" a repo matching several categories is shown only once.
+  List<Map<String, dynamic>> visibleRepos() {
+    final seen = <String>{};
+    return repos
+        .where((r) =>
+            (category == 0 || r['topic_category'] == categories[category]) &&
+            seen.add(r['repo_name'] as String))
+        .toList();
+  }
+
   Widget generator() => ListView(padding: const EdgeInsets.all(16), children: [
         TextField(
             controller: task,
