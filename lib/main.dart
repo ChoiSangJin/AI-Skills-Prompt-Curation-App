@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'gemini_service.dart';
 import 'summary_loading.dart';
 import 'github_service.dart';
+import 'prompt_studio.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -67,8 +68,11 @@ ThemeData appTheme() {
 class App extends StatelessWidget {
   const App({super.key});
   @override
-  Widget build(BuildContext context) =>
-      MaterialApp(title: 'AI 모아', theme: appTheme(), home: const Home());
+  Widget build(BuildContext context) => MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'AI 모아',
+      theme: appTheme(),
+      home: const Home());
 }
 
 class Home extends StatefulWidget {
@@ -85,6 +89,9 @@ class _HomeState extends State<Home> {
   List<Map<String, dynamic>> repos = [];
   List<Map<String, dynamic>> saved = [];
   Map<String, dynamic>? recipe;
+  String recipeTitle = '';
+  bool recipeIsSample = false;
+  bool recipeSaved = false;
   final gemini = GeminiService();
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
   final keyInput = TextEditingController();
@@ -269,66 +276,67 @@ class _HomeState extends State<Home> {
                             mode: LaunchMode.externalApplication))))
         ]))
       ]);
-  Widget generator() => ListView(padding: const EdgeInsets.all(16), children: [
-        TextField(
-            controller: task,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: '어떤 작업을 하고 싶나요?')),
-        FilledButton(
-            onPressed: busy
-                ? null
-                : () => run(() async {
-                      final key = await Store.secure.read(key: 'gemini');
-                      if (key == null) {
-                        setState(() => message = '설정에서 Gemini 키를 등록하세요.');
-                        return;
-                      }
-                      final result = await gemini.generate(key, task.text);
-                      if (mounted) setState(() => recipe = result);
-                    }),
-            child: const Text('추천 및 프롬프트 생성')),
-        OutlinedButton(
-            onPressed: () => setState(() => recipe = {
-                  'use_case_summary':
-                      'Flutter 화면을 작은 위젯으로 분리하고 접근성과 오류 상태를 점검하세요. 주의: API 키를 소스 코드에 넣지 마세요.',
-                  'target_audience': 'Flutter 개발자',
-                  'execution_snippet':
-                      'Flutter 화면을 설계해 주세요. 로딩·빈 목록·오류 상태와 접근성 레이블을 포함하고 작은 위젯으로 분리하세요.'
-                }),
-            child: const Text('오프라인 샘플 보기')),
-        if (recipe != null) ...[
-          SelectableText(
-              '${recipe!['use_case_summary']}\n\n${recipe!['target_audience']}\n\n${recipe!['execution_snippet']}'),
-          TextButton(
-              onPressed: () => Clipboard.setData(
-                  ClipboardData(text: recipe!['execution_snippet'])),
-              child: const Text('프롬프트 복사')),
-          TextButton(
-              onPressed: () => run(() async {
-                    final db = await Store.open();
-                    final now = DateTime.now().millisecondsSinceEpoch;
-                    await db.insert('saved_prompts', {
-                      'id': '$now',
-                      'title': task.text.isEmpty ? '샘플' : task.text,
-                      'content': recipe!['execution_snippet'],
-                      'category': 'custom',
-                      'created_at': now
-                    });
-                    final rows = await db.query('saved_prompts',
-                        orderBy: 'created_at DESC');
-                    if (mounted) setState(() => saved = rows);
-                  }),
-              child: const Text('저장'))
-        ],
-        const Divider(),
-        const Text('저장한 프롬프트'),
-        for (final item in saved)
-          ListTile(
-              title: Text(item['title']),
-              subtitle: Text(item['content']),
-              onTap: () =>
-                  Clipboard.setData(ClipboardData(text: item['content'])))
-      ]);
+  Widget generator() => PromptStudio(
+        controller: task,
+        busy: busy,
+        recipe: recipe,
+        recipeTitle: recipeTitle,
+        isSample: recipeIsSample,
+        recipeSaved: recipeSaved,
+        saved: saved,
+        onGenerate: (request) => run(() async {
+          final key = await Store.secure.read(key: 'gemini');
+          if (key == null) {
+            if (mounted) setState(() => message = '설정에서 Gemini 키를 등록하세요.');
+            return;
+          }
+          final result = await gemini.generate(key, request);
+          if (mounted)
+            setState(() {
+              recipe = result;
+              recipeTitle = request;
+              recipeIsSample = false;
+              recipeSaved = false;
+            });
+        }),
+        onSample: () => setState(() {
+          recipe = {
+            'use_case_summary':
+                '화면을 작은 위젯으로 나누고, 로딩·빈 목록·오류 상태를 먼저 설계하세요. 주의: 사용자 입력과 API 키를 코드에 직접 넣지 마세요.',
+            'target_audience': 'Flutter 앱을 처음 설계하거나 화면 구조를 개선하려는 개발자',
+            'execution_snippet':
+                '당신은 Flutter UI 개발자입니다.\n\n목표: 접근성이 좋은 모바일 회원가입 화면을 설계해 주세요.\n\n요구 사항:\n1. 입력 필드, 검증, 제출 버튼을 작은 위젯으로 분리합니다.\n2. 로딩·성공·오류 상태와 안내 문구를 포함합니다.\n3. 큰 글씨와 좁은 화면에서도 읽기 쉽게 구성합니다.\n\n출력: 화면 구조 → 구현 순서 → 위젯 코드 → 점검 목록 순서로 작성해 주세요.',
+          };
+          recipeTitle = 'Flutter 회원가입 화면 설계';
+          recipeIsSample = true;
+          recipeSaved = false;
+        }),
+        onSave: () => run(() async {
+          if (recipe == null || recipeSaved) return;
+          final savingRecipe = recipe!;
+          final savingTitle = recipeTitle;
+          final savingSample = recipeIsSample;
+          final db = await Store.open();
+          final now = DateTime.now().millisecondsSinceEpoch;
+          await db.insert('saved_prompts', {
+            'id': '$now',
+            'title': savingTitle,
+            'content': savingRecipe['execution_snippet'],
+            'category': savingSample ? 'sample' : 'custom',
+            'created_at': now,
+          });
+          final rows =
+              await db.query('saved_prompts', orderBy: 'created_at DESC');
+          if (mounted) {
+            setState(() {
+              saved = rows;
+              if (identical(recipe, savingRecipe)) recipeSaved = true;
+            });
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('프롬프트를 저장했어요')));
+          }
+        }),
+      );
   Widget settings() => ListView(padding: const EdgeInsets.all(16), children: [
         const Text(
             '키는 기기의 보안 저장소에 보관됩니다. Gemini 요청 시 입력 내용과 선택한 저장소 메타데이터가 Google로 전송됩니다.'),
