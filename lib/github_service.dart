@@ -24,6 +24,49 @@ const risingDays = 30;
 // stricter threshold for the broader categories to limit low-signal results.
 const risingMinStars = [3, 10, 5, 10];
 const pageSize = 20;
+const publicCacheUrl =
+    'https://github.com/ChoiSangJin/AI-Skills-Prompt-Curation-App/releases/download/public-cache/trending.json';
+
+class SharedTrending {
+  final DateTime generatedAt;
+  final Map<String, List<dynamic>> categories;
+  const SharedTrending(this.generatedAt, this.categories);
+}
+
+/// One public request replaces the 11 unauthenticated GitHub Search requests
+/// previously made by every device for each feed.
+Future<SharedTrending> fetchSharedTrending(Feed feed,
+    {http.Client? client, Uri? uri}) async {
+  final owned = client == null;
+  client ??= http.Client();
+  try {
+    final response =
+        await client.get(uri ?? Uri.parse(publicCacheUrl), headers: {
+      'Accept': 'application/json',
+      'User-Agent': 'AI-Moa',
+    }).timeout(const Duration(seconds: 20));
+    if (response.statusCode != 200) {
+      throw ApiFailure('공용 트렌드 캐시를 불러오지 못했습니다 (${response.statusCode}).',
+          response.statusCode);
+    }
+    final data = jsonDecode(utf8.decode(response.bodyBytes));
+    if (data is! Map<String, dynamic> || data['version'] != 1) {
+      throw const FormatException('Invalid public cache');
+    }
+    final generatedAt = DateTime.parse(data['generated_at'] as String).toUtc();
+    final feeds = data['feeds'] as Map<String, dynamic>;
+    final rawCategories = feeds[feed.name] as Map<String, dynamic>;
+    final categories = <String, List<dynamic>>{};
+    for (final name in categoryNames) {
+      final items = rawCategories[name];
+      if (items is! List) throw const FormatException('Invalid public cache');
+      categories[name] = items;
+    }
+    return SharedTrending(generatedAt, categories);
+  } finally {
+    if (owned) client.close();
+  }
+}
 
 Uri trendingUri(int category, int topic,
     {Feed feed = Feed.popular, DateTime? now}) {

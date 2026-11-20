@@ -1,0 +1,24 @@
+name: Public trending cache
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build shared GitHub trends
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tool/update-public-cache.py "$RUNNER_TEMP/trending.json"
+      - name: Publish stable cache asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view public-cache >/dev/null 2>&1; then
+            gh release create public-cache --prerelease --title "AI 모아 공용 트렌드 캐시" --notes "앱이 사용하는 자동 생성 데이터입니다. 6시간마다 갱신됩니다."
+          fi
+          gh release upload public-cache "$RUNNER_TEMP/trending.json" --clobber

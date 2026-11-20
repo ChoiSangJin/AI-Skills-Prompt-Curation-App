@@ -6,6 +6,37 @@ import 'package:ai_skills_curation/github_service.dart';
 import 'package:ai_skills_curation/gemini_service.dart';
 
 void main() {
+  test('shared cache returns every category with one request', () async {
+    var requests = 0;
+    final result = await fetchSharedTrending(Feed.rising,
+        uri: Uri.parse('https://example.test/trending.json'),
+        client: MockClient((request) async {
+      requests++;
+      return http.Response(
+          jsonEncode({
+            'version': 1,
+            'generated_at': '2026-11-20T00:00:00Z',
+            'feeds': {
+              'rising': {
+                for (final category in categoryNames)
+                  category: [
+                    {'full_name': '$category/repo'}
+                  ]
+              }
+            }
+          }),
+          200);
+    }));
+    expect(requests, 1);
+    expect(result.generatedAt, DateTime.utc(2026, 11, 20));
+    expect(result.categories.keys, containsAll(categoryNames));
+  });
+  test('invalid shared cache fails safely', () async {
+    await expectLater(
+        fetchSharedTrending(Feed.popular,
+            client: MockClient((_) async => http.Response('{}', 200))),
+        throwsFormatException);
+  });
   test('search topics independently then merge, deduplicate and sort',
       () async {
     var count = 0;
