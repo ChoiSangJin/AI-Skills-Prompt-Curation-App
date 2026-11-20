@@ -20,7 +20,9 @@ const minStars = [30, 50, 30, 100];
 enum Feed { popular, rising }
 
 const risingDays = 30;
-const risingMinStars = 10;
+// New Skills often become useful before they accumulate many stars. Keep a
+// stricter threshold for the broader categories to limit low-signal results.
+const risingMinStars = [3, 10, 5, 10];
 const pageSize = 20;
 
 Uri trendingUri(int category, int topic,
@@ -34,7 +36,7 @@ Uri trendingUri(int category, int topic,
   return Uri.https('api.github.com', '/search/repositories', {
     'q': feed == Feed.popular
         ? 'topic:$name stars:>${minStars[category]}'
-        : 'topic:$name created:>$since stars:>$risingMinStars',
+        : 'topic:$name created:>$since stars:>${risingMinStars[category]}',
     'sort': 'stars',
     'order': 'desc',
     'per_page': '$pageSize',
@@ -53,12 +55,11 @@ Future<List<dynamic>> fetchTrending(int category,
     Object? failure;
     for (var topic = 0; topic < githubTopics[category].length; topic++) {
       try {
-        final response = await client.get(
-            trendingUri(category, topic, feed: feed, now: now),
-            headers: {
-              'Accept': 'application/vnd.github+json',
-              'User-Agent': 'AI-Moa',
-            }).timeout(const Duration(seconds: 20));
+        final response = await client
+            .get(trendingUri(category, topic, feed: feed, now: now), headers: {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'AI-Moa',
+        }).timeout(const Duration(seconds: 20));
         if (response.statusCode == 403 || response.statusCode == 429) {
           throw ApiFailure(
               'GitHub 검색 사용 한도 또는 접근 제한입니다. 잠시 후 다시 시도해 주세요. 저장된 자료가 있으면 표시합니다.',
@@ -108,12 +109,11 @@ Future<String?> fetchReadme(String fullName, {http.Client? client}) async {
   final owned = client == null;
   client ??= http.Client();
   try {
-    final response = await client.get(
-        Uri.https('api.github.com', '/repos/$fullName/readme'),
-        headers: {
-          'Accept': 'application/vnd.github.raw+json',
-          'User-Agent': 'AI-Moa',
-        }).timeout(const Duration(seconds: 20));
+    final response = await client
+        .get(Uri.https('api.github.com', '/repos/$fullName/readme'), headers: {
+      'Accept': 'application/vnd.github.raw+json',
+      'User-Agent': 'AI-Moa',
+    }).timeout(const Duration(seconds: 20));
     if (response.statusCode != 200) return null;
     final text = utf8.decode(response.bodyBytes, allowMalformed: true);
     return text.length > readmeLimit ? text.substring(0, readmeLimit) : text;

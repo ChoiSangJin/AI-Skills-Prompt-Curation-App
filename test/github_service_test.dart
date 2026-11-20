@@ -49,11 +49,10 @@ void main() {
     final uri = trendingUri(0, 1,
         feed: Feed.rising, now: DateTime.utc(2026, 11, 11, 12));
     expect(uri.queryParameters['q'],
-        'topic:claude-skills created:>2026-10-12 stars:>10');
+        'topic:claude-skills created:>2026-10-12 stars:>3');
     expect(uri.queryParameters['sort'], 'stars');
   });
-  test('each topic keeps a share of the page against larger topics',
-      () async {
+  test('each topic keeps a share of the page against larger topics', () async {
     final client = MockClient((request) async {
       final topic = request.url.queryParameters['q']!.split(' ').first;
       // The first topic has 20 huge repos; the others have small ones.
