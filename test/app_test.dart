@@ -63,7 +63,9 @@ void main() {
     expect(compact(1000), '1k');
     expect(compact(1250000), '1.3M');
     expect(find.text('토픽: agent-skills'), findsOneWidget);
-    await tester.tap(find.text('AI 요약 보기 (Gemini 키 필요)'));
+    expect(find.text('한국어 빠른 안내'), findsOneWidget);
+    expect(find.textContaining('재사용 가능한 작업 절차'), findsOneWidget);
+    await tester.tap(find.text('README 심층 요약 (Gemini 키 필요)'));
     await tester.pumpAndSettle();
     expect(find.text('설정 탭에서 Gemini 키를 먼저 등록해 주세요.'), findsOneWidget);
     await tester.tap(find.byTooltip('북마크'));

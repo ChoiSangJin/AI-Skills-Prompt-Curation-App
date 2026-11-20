@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'gemini_service.dart';
+import 'repo_guide.dart';
 
 /// Short star count such as 450.5k or 1.2M.
 String compact(int n) {
@@ -23,7 +24,11 @@ String ago(int millis, {DateTime? now}) {
   return '${diff.inDays}일 전';
 }
 
-const summaryFields = ['use_case_summary', 'target_audience', 'execution_snippet'];
+const summaryFields = [
+  'use_case_summary',
+  'target_audience',
+  'execution_snippet'
+];
 
 /// Repository details that work without a Gemini key; the AI summary is an
 /// optional action on this page instead of a requirement for opening it.
@@ -55,8 +60,8 @@ class _RepoDetailState extends State<RepoDetail> {
 
   void copy(String text) {
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('복사했어요'), duration: Duration(seconds: 1)));
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('복사했어요'), duration: Duration(seconds: 1)));
   }
 
   Future<void> summarize() async {
@@ -76,8 +81,8 @@ class _RepoDetailState extends State<RepoDetail> {
 
   @override
   Widget build(BuildContext context) {
-    final topics = (jsonDecode(repo['topics'] as String? ?? '[]') as List)
-        .cast<String>();
+    final topics =
+        (jsonDecode(repo['topics'] as String? ?? '[]') as List).cast<String>();
     final pushed = DateTime.tryParse(repo['pushed_at'] as String? ?? '');
     final hasSummary = repo['use_case_summary'] != null;
     return Scaffold(
@@ -91,6 +96,12 @@ class _RepoDetailState extends State<RepoDetail> {
               })
         ]),
         body: ListView(padding: const EdgeInsets.all(16), children: [
+          Text(hasSummary ? '한국어 AI 요약' : '한국어 빠른 안내',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(koreanQuickGuide(repo)),
+          const SizedBox(height: 8),
+          const Text('GitHub 원문 설명',
+              style: TextStyle(fontWeight: FontWeight.bold)),
           Text(repo['original_description'] as String? ?? ''),
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 4, children: [
@@ -99,8 +110,7 @@ class _RepoDetailState extends State<RepoDetail> {
             if (repo['language'] != null) Chip(label: Text(repo['language'])),
             if (pushed != null)
               Chip(
-                  label: Text(
-                      '최근 업데이트 ${ago(pushed.millisecondsSinceEpoch)}')),
+                  label: Text('최근 업데이트 ${ago(pushed.millisecondsSinceEpoch)}')),
           ]),
           if (topics.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -126,11 +136,10 @@ class _RepoDetailState extends State<RepoDetail> {
           ] else
             OutlinedButton.icon(
                 icon: const Icon(Icons.auto_awesome),
-                label: const Text('AI 요약 보기 (Gemini 키 필요)'),
+                label: const Text('README 심층 요약 (Gemini 키 필요)'),
                 onPressed: busy ? null : summarize),
           if (error.isNotEmpty)
-            Padding(
-                padding: const EdgeInsets.only(top: 8), child: Text(error)),
+            Padding(padding: const EdgeInsets.only(top: 8), child: Text(error)),
         ]));
   }
 }

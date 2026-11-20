@@ -2,6 +2,8 @@
 
 Flutter client for Android ARM64 and iOS. GitHub trends are cached in SQLite for 12 hours. Gemini summaries and task recipes use a user-supplied API key stored with flutter_secure_storage. Built-in prompt examples (coding, image generation, writing, research), repository details, bookmarks and the popular/rising (last 30 days) feeds require no key.
 
+Every repository also has a conservative Korean quick guide inferred from its category and public GitHub topics, so browsing does not require a Gemini key. When a user generates a README-grounded Gemini summary, that repository-specific Korean summary replaces the generic guide in the feed. The quick guide is context, not a translation; the original GitHub description remains available on the detail page.
+
 ## Development
 
 With Flutter 3.38.5, Android SDK and Java 17 available:

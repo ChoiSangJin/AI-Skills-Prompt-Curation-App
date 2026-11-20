@@ -8,6 +8,7 @@ import 'github_service.dart';
 import 'prompt_library.dart';
 import 'prompt_studio.dart';
 import 'repo_detail.dart';
+import 'repo_guide.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -144,7 +145,7 @@ class _HomeState extends State<Home> {
   String keyStatus = '키를 등록하면 사용할 수 있는 모델을 자동으로 찾습니다.';
   final keyInput = TextEditingController();
   final task = TextEditingController();
-  final categories = ['All', ...categoryNames];
+  final categories = ['전체', ...categoryNames];
   @override
   void initState() {
     super.initState();
@@ -428,7 +429,7 @@ class _HomeState extends State<Home> {
                   decoration: InputDecoration(
                       isDense: true,
                       prefixIcon: const Icon(Icons.search),
-                      hintText: '이름·설명 검색',
+                      hintText: '이름·한국어 목적 검색',
                       fillColor: Colors.white,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(28),
@@ -548,7 +549,9 @@ class _HomeState extends State<Home> {
     final name = repo['repo_name'] as String;
     final slash = name.indexOf('/');
     final pushed = DateTime.tryParse(repo['pushed_at'] as String? ?? '');
-    final description = repo['original_description'] as String? ?? '';
+    final guide = koreanQuickGuide(repo);
+    final hasAiSummary =
+        (repo['use_case_summary'] as String?)?.trim().isNotEmpty ?? false;
     return Card(
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -585,16 +588,16 @@ class _HomeState extends State<Home> {
                                 : Icons.bookmark_border),
                             onPressed: () => toggleBookmark(repo)),
                       ]),
-                      if (description.isNotEmpty)
-                        Padding(
-                            padding: const EdgeInsets.only(top: 4, right: 12),
-                            child: Text(description,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium)),
+                      Padding(
+                          padding: const EdgeInsets.only(top: 4, right: 12),
+                          child: Text(guide,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium)),
                       const SizedBox(height: 8),
                       Text(
                           [
+                            hasAiSummary ? '한국어 AI 요약' : '한국어 빠른 안내',
                             '★ ${compact(repo['star_count'] as int)}',
                             if (repo['language'] != null) repo['language'],
                             repo['topic_category'],
@@ -613,7 +616,7 @@ class _HomeState extends State<Home> {
         .where((r) =>
             (category == 0 || r['topic_category'] == categories[category]) &&
             (query.isEmpty ||
-                '${r['repo_name']} ${r['original_description']}'
+                '${r['repo_name']} ${r['original_description']} ${koreanQuickGuide(r)}'
                     .toLowerCase()
                     .contains(query)) &&
             seen.add(r['repo_name'] as String))
