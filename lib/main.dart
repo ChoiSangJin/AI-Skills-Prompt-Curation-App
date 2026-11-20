@@ -198,8 +198,45 @@ class _HomeState extends State<Home> {
     }
   }
 
-  // force: the manual refresh button skips the 12-hour cache check.
-  // Only the selected feed is fetched to stay within GitHub's search limit.
+  Future<void> replaceCategory(
+      Database db, int index, List<dynamic> items, int updatedAt) async {
+    const where = 'feed = ? AND topic_category = ?';
+    final args = [feed.name, categoryNames[index]];
+    await db.transaction((txn) async {
+      await txn.delete('cached_repos', where: where, whereArgs: args);
+      for (final item in items) {
+        await txn.insert('cached_repos', {
+          'repo_name': item['full_name'],
+          'feed': feed.name,
+          'topic_category': categoryNames[index],
+          'repo_url': item['html_url'],
+          'star_count': item['stargazers_count'],
+          'original_description': item['description'] ?? '',
+          'language': item['language'],
+          'topics': jsonEncode(item['topics'] ?? []),
+          'pushed_at': item['pushed_at'],
+          'updated_at': updatedAt
+        });
+        await txn.insert('seen_repos',
+            {'repo_name': item['full_name'], 'first_seen_at': updatedAt},
+            conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
+  }
+
+  Future<bool> categoryIsFresh(Database db, int index) async {
+    final cached = await db.query('cached_repos',
+        where: 'feed = ? AND topic_category = ?',
+        whereArgs: [feed.name, categoryNames[index]]);
+    return cached.isNotEmpty &&
+        cached.every((row) =>
+            DateTime.now().millisecondsSinceEpoch - (row['updated_at'] as int) <
+            43200000);
+  }
+
+  // One shared-cache request normally refreshes every category in a feed.
+  // If it is unavailable, query only the selected category (Skills for All),
+  // keeping the direct GitHub fallback below the unauthenticated rate limit.
   Future<void> load({bool force = false}) => run(() async {
         final db = await Store.open();
         if (!visitLoaded) {
@@ -209,50 +246,31 @@ class _HomeState extends State<Home> {
               row.isEmpty ? null : int.parse(row.first['value'] as String);
           visitLoaded = true;
         }
-        for (int i = 0; i < categoryNames.length; i++) {
-          const where = 'feed = ? AND topic_category = ?';
-          final args = [feed.name, categoryNames[i]];
-          final cached =
-              await db.query('cached_repos', where: where, whereArgs: args);
-          if (!force &&
-              cached.isNotEmpty &&
-              cached.every((r) =>
-                  DateTime.now().millisecondsSinceEpoch -
-                      (r['updated_at'] as int) <
-                  43200000)) continue;
+        final requested = category == 0
+            ? List<int>.generate(categoryNames.length, (index) => index)
+            : [category - 1];
+        var needsRefresh = force;
+        if (!needsRefresh) {
+          for (final index in requested) {
+            if (!await categoryIsFresh(db, index)) {
+              needsRefresh = true;
+              break;
+            }
+          }
+        }
+        if (needsRefresh) {
           try {
-            final items = await fetchTrending(i, feed: feed);
-            final now = DateTime.now().millisecondsSinceEpoch;
-            await db.transaction((txn) async {
-              // Replace the whole category so repos that fell out of the
-              // ranking do not linger and defeat the freshness check.
-              await txn.delete('cached_repos', where: where, whereArgs: args);
-              for (final item in items) {
-                await txn.insert('cached_repos', {
-                  'repo_name': item['full_name'],
-                  'feed': feed.name,
-                  'topic_category': categoryNames[i],
-                  'repo_url': item['html_url'],
-                  'star_count': item['stargazers_count'],
-                  'original_description': item['description'] ?? '',
-                  'language': item['language'],
-                  'topics': jsonEncode(item['topics'] ?? []),
-                  'pushed_at': item['pushed_at'],
-                  'updated_at': now
-                });
-                await txn.insert('seen_repos',
-                    {'repo_name': item['full_name'], 'first_seen_at': now},
-                    conflictAlgorithm: ConflictAlgorithm.ignore);
-              }
-            });
-          } catch (error) {
-            if (mounted)
-              setState(() {
-                message = friendlyError(error);
-              });
-            // Further categories would hit the same GitHub limit.
-            if (error is ApiFailure &&
-                (error.status == 403 || error.status == 429)) break;
+            final shared = await fetchSharedTrending(feed);
+            final updatedAt = shared.generatedAt.millisecondsSinceEpoch;
+            for (var i = 0; i < categoryNames.length; i++) {
+              await replaceCategory(
+                  db, i, shared.categories[categoryNames[i]]!, updatedAt);
+            }
+          } catch (_) {
+            final fallbackIndex = category == 0 ? 0 : category - 1;
+            final items = await fetchTrending(fallbackIndex, feed: feed);
+            await replaceCategory(db, fallbackIndex, items,
+                DateTime.now().millisecondsSinceEpoch);
           }
         }
         // Written after this session's first fetch so repos seen now are
@@ -470,7 +488,10 @@ class _HomeState extends State<Home> {
                           visualDensity: VisualDensity.compact,
                           label: Text(categories[i]),
                           selected: category == i,
-                          onSelected: (_) => setState(() => category = i)))
+                          onSelected: (_) {
+                            setState(() => category = i);
+                            load();
+                          }))
               ])),
           Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),

@@ -4,6 +4,8 @@ Flutter client for Android ARM64 and iOS. GitHub trends are cached in SQLite for
 
 Every repository also has a conservative Korean quick guide inferred from its category and public GitHub topics, so browsing does not require a Gemini key. When a user generates a README-grounded Gemini summary, that repository-specific Korean summary replaces the generic guide in the feed. The quick guide is context, not a translation; the original GitHub description remains available on the detail page.
 
+Popular and rising feeds are generated with GitHub Actions and published as a shared public cache. Devices normally make one cache request per stale feed instead of repeating eleven unauthenticated GitHub Search requests. If the shared cache is unavailable, the app falls back to direct search for only the selected category.
+
 ## Development
 
 With Flutter 3.38.5, Android SDK and Java 17 available:
